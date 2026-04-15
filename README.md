@@ -46,3 +46,36 @@ An offline-first, LLM-driven research assistant designed to run unattended. It t
 ### Phase 4: The Autonomous Loop
 1. Wire all components together in `agent/loop.py`.
 2. Implement the evaluation logic: The agent reviews what is currently in ChromaDB, decides what knowledge is missing, and triggers the next iteration.
+
+## Setup & Installation
+
+This project uses a local Python virtual environment to manage dependencies and keeps all sensitive data out of version control.
+
+**1. Clone the repository:**
+```bash
+git clone <your-repo-url>
+cd AI-Discord-Bot
+```
+
+**2. Initialize the virtual environment:**
+*(Assuming the environment is built directly in the project root)*
+```bash
+python -m venv .
+```
+
+**3. Install dependencies:**
+*(Note: Run this once we have populated the `requirements.txt` later in the build)*
+```bash
+./bin/pip install -r requirements.txt
+```
+
+**4. Configure Environment Variables:**
+You must create a `.env` file in the root directory. This file is intentionally ignored by Git for security. 
+```env
+DISCORD_TOKEN=your_discord_bot_token_here
+LLM_API_BASE=http://localhost:8080/v1
+LLM_API_KEY=sk-no-key-required
+CHROMA_DB_PATH=./chroma_data
+```
+
+**Note on Version Control:** The `bin/`, `lib/`, and `chroma_data/` directories are intentionally excluded via `.gitignore` to keep the repository lightweight and secure.
