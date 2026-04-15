@@ -25,6 +25,60 @@ async def generate_search_queries(topic: str, num_queries: int = 3) -> list[str]
         print("[Planner] Failed to parse queries. Using fallback.")
         return [topic] # Fallback to just searching the topic itself
 
+
+async def evaluate_and_replan(subject: str, existing_knowledge: list[str], stats: dict, num_queries: int = 3) -> tuple[list[str], str]:
+    """Reviews what the agent has learned so far and generates NEW targeted queries.
+    
+    Args:
+        subject: The original research topic
+        existing_knowledge: Sample chunks of what's already been collected
+        stats: Collection stats (chunk count, source count, etc.)
+        num_queries: How many new queries to generate
+        
+    Returns:
+        Tuple of (new_queries, gap_analysis_summary)
+    """
+    llm = LocalLLM()
+    
+    knowledge_summary = "\n".join([f"- {chunk[:300]}" for chunk in existing_knowledge[:15]])
+    
+    system_prompt = (
+        "You are an expert research evaluator. You are reviewing the progress of an autonomous research agent. "
+        "Your job is to:\n"
+        "1. Analyze what has been learned so far\n"
+        "2. Identify critical GAPS in the knowledge — what's missing?\n"
+        "3. Generate NEW search queries that target the missing information\n\n"
+        "Return ONLY a valid JSON object with two keys:\n"
+        "- 'gap_analysis': A brief 1-2 sentence summary of what's missing\n"
+        "- 'queries': A list of new, specific search queries to fill the gaps\n\n"
+        "Example: {\"gap_analysis\": \"Missing technical details...\", \"queries\": [\"query 1\", \"query 2\"]}"
+    )
+    
+    user_prompt = (
+        f"RESEARCH TOPIC: {subject}\n\n"
+        f"CURRENT PROGRESS:\n"
+        f"- {stats.get('total_chunks', 0)} text chunks collected from {stats.get('unique_sources', 0)} sources\n\n"
+        f"SAMPLE OF COLLECTED KNOWLEDGE:\n{knowledge_summary}\n\n"
+        f"Based on this, what critical information is STILL MISSING about '{subject}'? "
+        f"Generate {num_queries} NEW search queries that target the gaps. "
+        f"Do NOT repeat queries that would find the same information already collected. "
+        f"Output strictly valid JSON without markdown formatting."
+    )
+    
+    print(f"[Planner] Evaluating knowledge gaps for: '{subject}'...")
+    result = await llm.generate_json(system_prompt, user_prompt)
+    
+    if result and "queries" in result:
+        queries = result["queries"]
+        gap_analysis = result.get("gap_analysis", "Gap analysis unavailable.")
+        print(f"[Planner] Identified gaps and generated {len(queries)} new queries.")
+        return queries, gap_analysis
+    else:
+        print("[Planner] Failed to parse re-plan. Generating fresh queries as fallback.")
+        fallback = await generate_search_queries(subject, num_queries)
+        return fallback, "Re-planning failed; using fresh queries."
+
+
 # Quick manual test
 if __name__ == "__main__":
     topic = "The history of TTL logic chips and their modern applications"

@@ -2,8 +2,6 @@ import chromadb
 import re
 from config.settings import CHROMA_DB_PATH
 
-import re # Add this at the top of the file
-
 class VectorDB:
     def __init__(self, collection_name="research_data"):
         # CLEAN THE NAME: 
@@ -54,6 +52,45 @@ class VectorDB:
         
         return []
 
+    def get_sample(self, n_samples: int = 10) -> list[str]:
+        """Returns a diverse sample of stored knowledge for evaluation.
+        
+        Used by the re-planner to understand what the agent has learned so far.
+        """
+        total = self.collection.count()
+        if total == 0:
+            return []
+        
+        # Get up to n_samples documents, spread across the collection
+        n = min(n_samples, total)
+        results = self.collection.get(
+            limit=n,
+            include=["documents"]
+        )
+        
+        if results and results['documents']:
+            return results['documents']
+        return []
+
+    def get_collection_stats(self) -> dict:
+        """Returns stats about the current collection for the re-planner."""
+        total = self.collection.count()
+        
+        # Get unique source URLs from metadata
+        sources = set()
+        if total > 0:
+            all_meta = self.collection.get(include=["metadatas"])
+            if all_meta and all_meta['metadatas']:
+                for meta in all_meta['metadatas']:
+                    if meta and "source" in meta:
+                        sources.add(meta["source"])
+        
+        return {
+            "total_chunks": total,
+            "unique_sources": len(sources),
+            "source_urls": list(sources)
+        }
+
     def delete_topic(self, collection_name: str):
         """Removes a specific collection from the database."""
         try:
@@ -73,3 +110,12 @@ if __name__ == "__main__":
     results = db.search("What is the central bank doing?")
     for res in results:
         print(f"Found: {res}")
+    
+    # Test new methods
+    print("\n--- Testing Sample ---")
+    sample = db.get_sample(5)
+    print(f"Got {len(sample)} sample chunks")
+    
+    print("\n--- Testing Stats ---")
+    stats = db.get_collection_stats()
+    print(f"Stats: {stats}")

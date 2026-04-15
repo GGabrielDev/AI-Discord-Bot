@@ -1,7 +1,8 @@
 import asyncio
+import hashlib
 import time
 from llm.client import LocalLLM
-from agent.planner import generate_search_queries
+from agent.planner import generate_search_queries, evaluate_and_replan
 from tools.search import get_search_results
 from tools.scraper import scrape_text_from_url
 from storage.vectordb import VectorDB
@@ -9,6 +10,10 @@ from storage.vectordb import VectorDB
 def chunk_text(text: str, chunk_size: int = 500) -> list[str]:
     words = text.split()
     return [" ".join(words[i:i + chunk_size]) for i in range(0, len(words), chunk_size)]
+
+def content_hash(text: str) -> str:
+    """Generate a short hash of content to detect duplicates."""
+    return hashlib.md5(text[:1000].encode()).hexdigest()
 
 async def run_autonomous_loop(subject, collection_name, max_iterations=3, depth=3, log_func=None):
     # This helper sends text to Discord if a log_func is provided, 
@@ -22,6 +27,7 @@ async def run_autonomous_loop(subject, collection_name, max_iterations=3, depth=
     db = VectorDB(collection_name=collection_name)
     llm = LocalLLM()
     seen_urls = set()
+    seen_hashes = set()  # Content-level deduplication
     
     current_queries = await generate_search_queries(subject, num_queries=3)
     
@@ -40,16 +46,45 @@ async def run_autonomous_loop(subject, collection_name, max_iterations=3, depth=
                 text = scrape_text_from_url(url)
                 
                 if len(text) > 300:
+                    # Content-level deduplication
+                    text_hash = content_hash(text)
+                    if text_hash in seen_hashes:
+                        await report(f"⏭️ *Duplicate content detected, skipping.*")
+                        seen_urls.add(url)
+                        continue
+                    
                     chunks = chunk_text(text)
                     db.add_chunks(chunks, url)
                     seen_urls.add(url)
+                    seen_hashes.add(text_hash)
                     await report(f"📥 *Stored {len(chunks)} chunks in memory.*")
                 
                 await asyncio.sleep(2) # Non-blocking sleep
         
+        # === THE EVALUATION STEP (was previously a stub) ===
         if iteration < max_iterations:
-            await report("🧠 *AI is evaluating current knowledge...*")
-            # ... (rest of the evaluation logic) ...
+            await report("🧠 *AI is evaluating current knowledge and identifying gaps...*")
+            
+            # 1. Sample what we've collected so far
+            sample = db.get_sample(n_samples=15)
+            stats = db.get_collection_stats()
+            
+            await report(f"📊 *Progress: {stats['total_chunks']} chunks from {stats['unique_sources']} sources*")
+            
+            # 2. Ask the LLM to analyze gaps and generate new queries
+            new_queries, gap_analysis = await evaluate_and_replan(
+                subject=subject,
+                existing_knowledge=sample,
+                stats=stats,
+                num_queries=3
+            )
+            
+            current_queries = new_queries
+            await report(f"💡 *Gap analysis:* {gap_analysis}")
             await report(f"🎯 *New targets identified:* {current_queries}")
 
+    # Final stats
+    final_stats = db.get_collection_stats()
+    await report(f"\n📊 **Final: {final_stats['total_chunks']} chunks from {final_stats['unique_sources']} sources**")
+    
     return len(seen_urls)
