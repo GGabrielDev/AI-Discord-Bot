@@ -209,7 +209,11 @@ async def run_autonomous_loop(subject, collection_name, max_iterations=3, depth=
                     
                     # Store the LLM summary as primary chunks
                     summary_chunks = chunk_text(summary)
-                    db.add_chunks(summary_chunks, url)
+                    db.add_chunks(summary_chunks, url, chunk_type="summary")
+                    
+                    # Store the raw text to preserve specific granular details (Dual-Ingestion)
+                    raw_chunks = chunk_text(text)
+                    db.add_chunks(raw_chunks, url, chunk_type="raw")
                     
                     # === WIKI BUILDER: Save human-readable markdown to disk ===
                     store_article(subject, url, summary)
