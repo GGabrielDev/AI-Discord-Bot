@@ -6,8 +6,10 @@ python-dotenv
 chromadb
 
 # --- Scraping & HTTP Clients ---
-httpx
+httpx[brotli,http2]
 beautifulsoup4
+marker-pdf[full]
+pydantic
 
 # --- AI & LLM Integration ---
 openai>=1.0.0

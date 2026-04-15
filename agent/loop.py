@@ -118,7 +118,7 @@ async def run_autonomous_loop(subject, collection_name, max_iterations=3, depth=
                 if url in seen_urls: continue
                 
                 await report(f"🌐 *Scraping:* <{url}>")
-                text = scrape_text_from_url(url)
+                text = await scrape_text_from_url(url)
                 
                 if len(text) > 300:
                     # Content-level deduplication

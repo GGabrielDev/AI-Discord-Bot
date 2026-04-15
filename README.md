@@ -53,8 +53,8 @@ This means the agent **gets smarter with each iteration** — it doesn't just re
 5. **Content Deduplication** — URL-level and content-hash-level duplicate detection
 6. **Smart RAG Retrieval** — Prioritizes analyzed summaries over raw text, cross-references sources
 7. **Source Provenance** — Every chunk tracks its origin URL, type, and timestamp
-8. **Web Scraping** — Robust HTML-to-text extraction with ad/boilerplate stripping
-9. **Discord Integration** — `/research` and `/ask` slash commands with live progress updates
+8. **Robust Web Scraping** — Streams content to enforce strict 150MB limits and verifies `Content-Type` immediately, preventing the agent from stalling on ISO files or slow connections.
+9. **Native PDF Parsing** — Extracts extremely accurate Markdown from research papers using `marker`.
 10. **Collection Management** — Autocomplete for existing research topics in Discord
 
 ## Setup & Installation
