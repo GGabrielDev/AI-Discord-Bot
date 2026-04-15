@@ -87,10 +87,11 @@ async def _stream_and_process_pdf(response: httpx.Response) -> str:
             downloaded_size += len(chunk)
             
             if downloaded_size > MAX_PDF_SIZE:
-                print(f"[Scraper] ⚠️ PDF size exceeded {MAX_PDF_SIZE//1024//1024}MB. Truncating stream.")
+                print(f"[Scraper] ⚠️ PDF size exceeded {MAX_PDF_SIZE/1024/1024:.0f}MB. Truncating stream.")
                 break
                 
-    print(f"[Scraper] Successfully downloaded {downloaded_size//1024//1024}MB PDF to {temp_path}.")
+    size_mb = downloaded_size / (1024 * 1024)
+    print(f"[Scraper] Successfully downloaded {size_mb:.2f}MB PDF to {temp_path}.")
     
     # --- Marker processing will be called here ---
     from tools.pdf_parser import extract_markdown_from_pdf
