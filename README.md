@@ -35,14 +35,16 @@ This means the agent **gets smarter with each iteration** — it doesn't just re
 │   └── client.py         # Hardened LLM client: retries, timeouts, task temperatures
 ├── tools/
 │   ├── search.py         # SearXNG integration for web searching
-│   └── scraper.py        # HTTP scraper: visits URLs, extracts clean text
+│   ├── scraper.py        # Streaming HTTP scraper: limits size, streams PDFs
+│   └── pdf_parser.py     # Native PDF extraction via CPU-bound Marker
 ├── storage/
 │   └── vectordb.py       # ChromaDB: chunking, embeddings, search, stats
 ├── agent/
 │   ├── planner.py        # Generates search queries + evaluates knowledge gaps
 │   ├── summarizer.py     # LLM-powered text analysis and fact extraction
-│   └── loop.py           # The autonomous research orchestration loop
-└── query.py              # RAG query interface for /ask command
+│   ├── loop.py           # The autonomous research orchestration loop
+│   └── wiki_builder.py   # Synthesizes `.md` files to the knowledge_base folder
+└── query.py              # RAG query interface (Multi-Query /ask mode matrix)
 ```
 
 ## Capabilities
