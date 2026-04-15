@@ -40,7 +40,8 @@ async def topic_autocomplete(
     except Exception:
         return []
 
-from agent.checkpoint import load_checkpoint
+from agent.checkpoint import load_checkpoint, load_chain_checkpoint, save_chain_checkpoint, delete_chain_checkpoint
+from agent.planner import decompose_chain_prompt
 
 # --- Slash Commands ---
 
@@ -101,6 +102,78 @@ async def research(interaction: discord.Interaction, subject: str, iterations: i
         await interaction.followup.send(f"🏁 **Mission Complete.** {count} sources archived in `{collection}`.")
     except Exception as e:
         await interaction.channel.send(f"🚨 **CRITICAL SYSTEM ERROR:** ```{e}```")
+
+@bot.tree.command(name="chain_research", description="Decompose a massive prompt into multiple sub-topics and research them in an automated chain.")
+@app_commands.describe(
+    prompt="What is your massive, overarching research goal?",
+    save_to="REQUIRED: Collection to pool all vectorized knowledge into.",
+    iterations="Thoroughness per sub-topic? (1-10)",
+    depth="Depth: How many sites to scrape per query? (1-5)"
+)
+@app_commands.autocomplete(save_to=topic_autocomplete)
+async def chain_research(interaction: discord.Interaction, prompt: str, save_to: str, iterations: int = 10, depth: int = 5):
+    # Check for macro chain checkpoint
+    chain_state = load_chain_checkpoint(prompt)
+    
+    if chain_state and chain_state.get("status") == "in_progress":
+        sub_topics = chain_state["sub_topics"]
+        start_index = chain_state["current_topic_index"]
+        await interaction.response.send_message(
+            f"⛓️ **Resuming Master Chain:** `{prompt[:50]}...`\n"
+            f"> Detected interrupted chain. Resuming at sub-topic {start_index+1}/{len(sub_topics)}."
+        )
+    else:
+        await interaction.response.send_message(f"⛓️ **Analyzing Master Prompt:** `{prompt}`\n> Decomposing into exhaustive sub-topics...")
+        sub_topics = await decompose_chain_prompt(prompt)
+        start_index = 0
+        
+        # Announce the formulated plan
+        plan_msg = "### 📋 Chain Research Plan\n"
+        for i, t in enumerate(sub_topics, 1):
+            plan_msg += f"{i}. {t}\n"
+        await interaction.channel.send(plan_msg)
+        
+        # Save initial state
+        save_chain_checkpoint(prompt, save_to, iterations, depth, sub_topics, start_index)
+        
+    for i in range(start_index, len(sub_topics)):
+        current_topic = sub_topics[i]
+        
+        # Save progress at the start of each topic
+        save_chain_checkpoint(prompt, save_to, iterations, depth, sub_topics, i)
+        
+        await interaction.channel.send(f"\n🚀 **Chain Progress {i+1}/{len(sub_topics)} — Starting sub-chain:** `{current_topic}`")
+        
+        status_message = None
+        async def chain_logger(message, is_sub_step=False):
+            nonlocal status_message
+            try:
+                if not is_sub_step:
+                    status_message = await interaction.channel.send(f"> {message}")
+                elif status_message:
+                    new_content = status_message.content + f"\n> ↳ {message}"
+                    if len(new_content) > 1900:
+                        status_message = await interaction.channel.send(f"> ↳ {message} (cont...)")
+                    else:
+                        await status_message.edit(content=new_content)
+            except Exception:
+                pass
+                
+        try:
+            await run_autonomous_loop(
+                subject=current_topic,
+                collection_name=save_to,
+                max_iterations=iterations,
+                depth=depth,
+                log_func=chain_logger
+            )
+        except Exception as e:
+            await interaction.channel.send(f"🚨 **CHAIN FAILED on `{current_topic}`:** ```{e}```")
+            return # Stop the chain if a sub-loop critically fails
+            
+    # Chain complete
+    delete_chain_checkpoint(prompt)
+    await interaction.channel.send(f"🏁 **ALL CHAINS COMPLETE.** Pool `{save_to}` is rich with knowledge!")
 
 @bot.tree.command(name="ask", description="Query your research database for answers.")
 @app_commands.describe(
