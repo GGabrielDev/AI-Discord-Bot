@@ -74,12 +74,12 @@ async def answer_question(topic: str, question: str, mode: str = "Balanced", log
     num_queries = 1 if mode == "Fast" else (5 if mode in ["Thorough", "Omniscient"] else 3)
     chunk_budget = 10 if mode == "Fast" else (60 if mode in ["Thorough", "Omniscient"] else 30)
     
-    async def log(msg: str):
+    async def log(msg: str, is_sub_step: bool = False):
         print(msg)
         if log_func:
-            await log_func(msg)
+            await log_func(msg, is_sub_step)
         else:
-            print(msg)
+            print(f"[Query] {msg}")
 
     # 1. Parameter Matrix Mapping
     if mode == "Fast":
@@ -216,12 +216,12 @@ async def answer_question(topic: str, question: str, mode: str = "Balanced", log
         if draft_callback:
             await draft_callback(answer, _current_auto_loop)
             
-        async def loc_log(m):
+        async def loc_log(m, is_sub_step=False):
             print(m)
-            if log_func: await log_func(m)
+            if log_func: await log_func(m, is_sub_step)
             
         await loc_log(f"⚠️ **Knowledge Gaps detected.** Auto-initiating targeted research loop (Iteration {_current_auto_loop + 1}/{max_auto_loops if max_auto_loops < 999 else '∞'})...")
-        await loc_log(f"🎯 *Formulating Gap Chain:* {', '.join(gap_queries)}")
+        await loc_log(f"🎯 *Formulating Gap Chain:* {', '.join(gap_queries)}", is_sub_step=True)
         
         for idx, gap_query in enumerate(gap_queries):
             # Soft stop inter-query check
