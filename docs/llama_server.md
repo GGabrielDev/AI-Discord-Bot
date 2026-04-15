@@ -61,7 +61,8 @@ Available cache types: `f32`, `f16` (default), `bf16`, `q8_0`, `q4_0`, `q4_1`, `
 
 ### RotorQuant (experimental, maximum compression)
 
-[RotorQuant](https://github.com/scrya-com/rotorquant) is a research project providing advanced KV cache compression via block-diagonal rotation. It requires building from a [custom llama.cpp fork](https://github.com/johndpope/llama-cpp-turboquant/tree/feature/planarquant-kv-cache).
+> [!WARNING]  
+> **Gemma 4 Compatibility Note:** Because `turboquant` is an experimental research fork, it is often lagging behind the main `llama.cpp` repository. As of right now, the `feature/planarquant-kv-cache` branch does not yet support the `gemma4` model architecture (it throws `unknown model architecture: 'gemma4'`). If you are running Gemma 4, you must stick with the vanilla `llama-server` and use the standard `q8_0` KV cache options until the developer merges the upstream updates.
 
 Because `turboquant` is just a fork of the regular `llama-server`, **it uses the exact same flags** (like `-c`, `--flash-attn`, and `--jinja`). The only difference is that turboquant mathematically unlocks the `iso3` options for your `--cache-type` flags instead of being limited to `q8_0`.
 
