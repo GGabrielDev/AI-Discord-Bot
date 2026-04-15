@@ -29,8 +29,10 @@ async def summarize_page(raw_text: str, subject: str, url: str, log_func=None) -
     words = raw_text.split()
     
     async def log(msg):
-        print(msg)
-        if log_func: await log_func(msg)
+        if log_func: 
+            await log_func(msg)
+        else:
+            print(msg)
     
     system_prompt = (
         "You are a meticulous research analyst extracting information from a web page. "

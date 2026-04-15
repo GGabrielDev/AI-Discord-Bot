@@ -14,8 +14,10 @@ MAX_PDF_SIZE = 150 * 1024 * 1024
 async def scrape_text_from_url(url: str, timeout: int = 15, log_func=None) -> str:
     """Safely streams a URL, checks content type, and extracts pure readable text or PDF markdown."""
     async def log(msg):
-        print(msg)
-        if log_func: await log_func(msg)
+        if log_func: 
+            await log_func(msg)
+        else:
+            print(msg)
 
     await log(f"[Scraper] Connecting to: {url}")
     
