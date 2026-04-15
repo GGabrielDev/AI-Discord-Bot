@@ -42,6 +42,10 @@ async def topic_autocomplete(
 
 from agent.checkpoint import load_checkpoint, load_chain_checkpoint, save_chain_checkpoint, delete_chain_checkpoint, request_soft_stop
 from agent.planner import decompose_chain_prompt
+import os
+import re
+import shutil
+from agent.wiki_builder import WIKI_ROOT, generate_index_page
 from agent.summarizer import compress_raw_text, chunk_text
 from tools.scraper import scrape_text_from_url
 from storage.vectordb import VectorDB
@@ -270,25 +274,44 @@ async def chain_research(interaction: discord.Interaction, prompt: str, topic: s
     app_commands.Choice(name="Omniscient (Uncapped gap-seeking, auto-loops until perfect)", value="Omniscient")
 ])
 async def ask(interaction: discord.Interaction, topic: str, question: str, mode: app_commands.Choice[str] = None, language: str = "English"):
-    # Acknowledge the command and set up for live edits
-    await interaction.response.defer()
+    # Acknowledge the command natively
+    await interaction.response.send_message(f"### 🧠 Intelligence Report: {topic}\n> **Q:** {question}\n\n⚙️ **Initializing Agentic Analysis...**")
     
     # Extract string from choice, default to Balanced
     mode_val = mode.value if mode else "Balanced"
     
+    status_message = None
     async def discord_status_logger(message: str, is_sub_step: bool = False):
-        # We edit the deferred response to show progress
+        nonlocal status_message
         try:
-            # We ignore is_sub_step for the ask dashboard, but we must accept the argument
-            # since loop.py provides it.
-            prefix = "> ↳ " if is_sub_step else "> "
-            await interaction.edit_original_response(content=f"### 🧠 Intelligence Report: {topic}\n> **Q:** {question}\n\n{prefix}{message}")
-        except discord.errors.HTTPException:
-            # Interaction token expired during massive agentic gap loops. 
+            if not is_sub_step:
+                status_message = await interaction.channel.send(f"> {message}")
+            elif status_message:
+                new_content = status_message.content + f"\n> ↳ {message}"
+                if len(new_content) > 1900:
+                    status_message = await interaction.channel.send(f"> ↳ {message} (continued...)")
+                else:
+                    await status_message.edit(content=new_content)
+        except Exception:
+            pass
+            
+    async def handle_draft(draft_text: str, iteration: int):
+        markdown_bytes = io.BytesIO(draft_text.encode('utf-8'))
+        file = discord.File(fp=markdown_bytes, filename=f"Draft_Iter_{iteration}_{topic}.md")
+        try:
+            await interaction.channel.send(f"⚠️ **Knowledge Gaps Found!** Intermediate draft (Iteration {iteration}) attached below. Agent is now pushing into Gap Trackers...", file=file)
+        except Exception:
             pass
     
     # 1. Run the massive multi-query pipeline (this will take time)
-    answer = await answer_question(topic, question, mode=mode_val, log_func=discord_status_logger, language=language)
+    answer = await answer_question(
+        topic, 
+        question, 
+        mode=mode_val, 
+        log_func=discord_status_logger, 
+        draft_callback=handle_draft, 
+        language=language
+    )
     
     # 2. Package the response as a downloadable Markdown file
     markdown_bytes = io.BytesIO(answer.encode('utf-8'))

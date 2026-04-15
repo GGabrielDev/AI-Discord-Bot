@@ -58,7 +58,7 @@ async def extract_gap_queries(llm: LocalLLM, answer_markdown: str) -> list[str]:
         return result["queries"]
     return []
 
-async def answer_question(topic: str, question: str, mode: str = "Balanced", log_func=None, language: str = "English", _current_auto_loop: int = 0, _draft: str = None) -> str:
+async def answer_question(topic: str, question: str, mode: str = "Balanced", log_func=None, draft_callback=None, language: str = "English", _current_auto_loop: int = 0, _draft: str = None) -> str:
     """Answers a question pulling from the vector DB, with true Agentic RAG auto-looping for explicitly identified gaps."""
     # Import here to avoid circular imports if query.py is loaded first
     from agent.loop import run_autonomous_loop
@@ -212,6 +212,10 @@ async def answer_question(topic: str, question: str, mode: str = "Balanced", log
     gap_queries = await extract_gap_queries(llm, answer)
     
     if gap_queries:
+        # Deliver intermediate draft file so the user can see the gaps before it stalls researching
+        if draft_callback:
+            await draft_callback(answer, _current_auto_loop)
+            
         async def loc_log(m):
             print(m)
             if log_func: await log_func(m)
@@ -245,6 +249,7 @@ async def answer_question(topic: str, question: str, mode: str = "Balanced", log
             question=question,
             mode=mode,
             log_func=log_func,
+            draft_callback=draft_callback,
             language=language,
             _current_auto_loop=_current_auto_loop + 1,
             _draft=answer
