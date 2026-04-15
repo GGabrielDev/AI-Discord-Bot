@@ -55,7 +55,8 @@ This means the agent **gets smarter with each iteration** — it doesn't just re
 7. **Source Provenance** — Every chunk tracks its origin URL, type, and timestamp
 8. **Robust Web Scraping** — Streams content to enforce strict 150MB limits and verifies `Content-Type` immediately, preventing the agent from stalling on ISO files or slow connections.
 9. **Native PDF Parsing** — Extracts extremely accurate Markdown from research papers using `marker`.
-10. **Collection Management** — Autocomplete for existing research topics in Discord
+10. **Markdown Wikipedia** — Automatically generates a readable, locally browsable `knowledge_base/` linking all summarized articles by topic.
+11. **Collection Management** — Autocomplete for existing research topics in Discord
 
 ## Setup & Installation
 

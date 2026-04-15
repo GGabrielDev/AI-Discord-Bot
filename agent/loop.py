@@ -4,6 +4,7 @@ import time
 from llm.client import LocalLLM
 from agent.planner import generate_search_queries, evaluate_and_replan
 from agent.summarizer import summarize_page
+from agent.wiki_builder import store_article
 from tools.search import get_search_results
 from tools.scraper import scrape_text_from_url
 from storage.vectordb import VectorDB
@@ -135,6 +136,9 @@ async def run_autonomous_loop(subject, collection_name, max_iterations=3, depth=
                     # Store the LLM summary as primary chunks
                     summary_chunks = chunk_text(summary)
                     db.add_chunks(summary_chunks, url)
+                    
+                    # === WIKI BUILDER: Save human-readable markdown to disk ===
+                    store_article(subject, url, summary)
                     
                     seen_urls.add(url)
                     seen_hashes.add(text_hash)
