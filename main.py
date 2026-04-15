@@ -40,6 +40,8 @@ async def topic_autocomplete(
     except Exception:
         return []
 
+from agent.checkpoint import load_checkpoint
+
 # --- Slash Commands ---
 
 @bot.tree.command(name="research", description="Start an autonomous research run.")
@@ -52,7 +54,20 @@ async def topic_autocomplete(
 @app_commands.autocomplete(save_to=topic_autocomplete) # Use the same autocomplete we built!
 async def research(interaction: discord.Interaction, subject: str, iterations: int = 3, depth: int = 2, save_to: str = None):
     collection = save_to if save_to else subject
-    await interaction.response.send_message(f"🏗️ **Building Research Environment for `{subject}`...**")
+    
+    # Check for an interrupted session and notify the user
+    checkpoint = load_checkpoint(subject)
+    if checkpoint and checkpoint.get("status") == "in_progress":
+        urls_done = len(checkpoint.get("seen_urls", set()))
+        iter_at = checkpoint.get("current_iteration", 1)
+        await interaction.response.send_message(
+            f"⚡ **Resuming interrupted research on `{subject}`!**\n"
+            f"> Previous session was interrupted at iteration {iter_at}/{iterations}.\n"
+            f"> {urls_done} sources already processed — all prior work preserved.\n"
+            f"> Picking up where we left off..."
+        )
+    else:
+        await interaction.response.send_message(f"🏗️ **Building Research Environment for `{subject}`...**")
     
     # This is the "Bridge" function
     async def discord_logger(message):
