@@ -94,9 +94,11 @@ async def _stream_and_process_pdf(response: httpx.Response) -> str:
     
     # --- Marker processing will be called here ---
     from tools.pdf_parser import extract_markdown_from_pdf
+    import asyncio
     
     try:
-        markdown_text = extract_markdown_from_pdf(temp_path)
+        # Offload massive synchronous PyTorch loading to a background thread
+        markdown_text = await asyncio.to_thread(extract_markdown_from_pdf, temp_path)
         return markdown_text
     except Exception as e:
         print(f"[Scraper] Failed to parse PDF with Marker: {e}")
