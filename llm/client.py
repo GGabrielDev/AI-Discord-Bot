@@ -22,6 +22,23 @@ class LocalLLM:
         )
         self.model = LLM_MODEL_NAME
         self.default_max_tokens = LLM_MAX_TOKENS
+        # Running token counters for the current bot session
+        self._total_prompt_tokens = 0
+        self._total_completion_tokens = 0
+    
+    def _log_usage(self, response, label: str = ""):
+        """Extracts and logs token usage from an OpenAI-compatible API response."""
+        usage = getattr(response, 'usage', None)
+        if usage:
+            prompt_tok = getattr(usage, 'prompt_tokens', 0) or 0
+            completion_tok = getattr(usage, 'completion_tokens', 0) or 0
+            self._total_prompt_tokens += prompt_tok
+            self._total_completion_tokens += completion_tok
+            total_session = self._total_prompt_tokens + self._total_completion_tokens
+            print(
+                f"[LLM] {label}Tokens: {prompt_tok:,} in → {completion_tok:,} out "
+                f"| Session total: {total_session:,}"
+            )
 
     async def generate_json(self, system_prompt: str, user_prompt: str, max_retries: int = 2) -> dict:
         """Forces the local LLM to output a dictionary/JSON with retry logic.
@@ -50,6 +67,7 @@ class LocalLLM:
                 )
                 
                 content = response.choices[0].message.content
+                self._log_usage(response, "JSON ")
                 
                 # Local reasoning models often wrap JSON in markdown blocks or add extra text.
                 # This regex surgically extracts just the JSON object/array.
@@ -102,6 +120,7 @@ class LocalLLM:
                 ),
                 timeout=LLM_TIMEOUT
             )
+            self._log_usage(response, "Text ")
             return response.choices[0].message.content
         except asyncio.TimeoutError:
             print(f"[LLM] Timeout after {LLM_TIMEOUT}s during text generation.")
