@@ -45,6 +45,13 @@ class VectorDB:
         
         return []
 
+    def delete_topic(self, collection_name: str):
+    try:
+        self.client.delete_collection(name=collection_name)
+        print(f"Collection '{collection_name}' deleted.")
+    except Exception as e:
+        print(f"Error deleting collection: {e}")
+
 # Quick manual test if you run this file directly
 if __name__ == "__main__":
     db = VectorDB()
