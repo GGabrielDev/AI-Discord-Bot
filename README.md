@@ -14,9 +14,10 @@ The agent runs an **iterative deepening loop**:
 
 1. **Plan** — The LLM generates targeted search queries for the topic
 2. **Harvest** — SearXNG finds URLs, the scraper extracts clean text
-3. **Store** — Text is chunked and saved to ChromaDB with source metadata
-4. **Evaluate** — The LLM reviews what's been collected, identifies knowledge gaps, and generates NEW queries targeting the missing information
-5. **Repeat** — Steps 2-4 repeat for the configured number of iterations, with queries evolving each cycle
+3. **Analyze** — The LLM reads each scraped page and produces a structured summary extracting key facts, data points, and relationships
+4. **Store** — Analyzed summaries are chunked and saved to ChromaDB with source metadata
+5. **Evaluate** — The LLM reviews what's been collected, identifies knowledge gaps, and generates NEW queries targeting the missing information
+6. **Repeat** — Steps 2-5 repeat for the configured number of iterations, with queries evolving each cycle
 
 This means the agent **gets smarter with each iteration** — it doesn't just repeat the same searches.
 
@@ -39,7 +40,7 @@ This means the agent **gets smarter with each iteration** — it doesn't just re
 │   └── vectordb.py       # ChromaDB: chunking, embeddings, search, stats
 ├── agent/
 │   ├── planner.py        # Generates search queries + evaluates knowledge gaps
-│   ├── summarizer.py     # (Coming soon) LLM-powered text analysis
+│   ├── summarizer.py     # LLM-powered text analysis and fact extraction
 │   └── loop.py           # The autonomous research orchestration loop
 └── query.py              # RAG query interface for /ask command
 ```

@@ -3,6 +3,7 @@ import hashlib
 import time
 from llm.client import LocalLLM
 from agent.planner import generate_search_queries, evaluate_and_replan
+from agent.summarizer import summarize_page
 from tools.search import get_search_results
 from tools.scraper import scrape_text_from_url
 from storage.vectordb import VectorDB
@@ -53,11 +54,17 @@ async def run_autonomous_loop(subject, collection_name, max_iterations=3, depth=
                         seen_urls.add(url)
                         continue
                     
-                    chunks = chunk_text(text)
-                    db.add_chunks(chunks, url)
+                    # === SUMMARIZE: The LLM actually reads the content ===
+                    await report(f"🧠 *Summarizing content...*")
+                    summary = await summarize_page(text, subject, url)
+                    
+                    # Store the LLM summary as primary chunks
+                    summary_chunks = chunk_text(summary)
+                    db.add_chunks(summary_chunks, url)
+                    
                     seen_urls.add(url)
                     seen_hashes.add(text_hash)
-                    await report(f"📥 *Stored {len(chunks)} chunks in memory.*")
+                    await report(f"📥 *Stored {len(summary_chunks)} analyzed chunks in memory.*")
                 
                 await asyncio.sleep(2) # Non-blocking sleep
         

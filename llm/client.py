@@ -38,7 +38,7 @@ class LocalLLM:
             print(f"[LLM] Error generating JSON: {e}")
             return {}
 
-    async def generate_text(self, system_prompt: str, user_prompt: str) -> str:
+    async def generate_text(self, system_prompt: str, user_prompt: str, temperature: float = 0.7) -> str:
         """Standard text generation for summaries."""
         try:
             response = await self.client.chat.completions.create(
@@ -47,7 +47,7 @@ class LocalLLM:
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
                 ],
-                temperature=0.7
+                temperature=temperature
             )
             return response.choices[0].message.content
         except Exception as e:
