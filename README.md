@@ -111,3 +111,15 @@ python main.py
 ```
 
 **Note on Version Control:** The `bin/`, `lib/`, `chroma_data/`, and `__pycache__/` directories are excluded via `.gitignore`.
+
+## Maintenance
+
+### Resetting the AI Brain
+If you want to intentionally wipe the bot's memory and make it forget all prior research, you must delete both its vector embeddings space and its human-readable Markdown directory.
+
+Run this in your terminal:
+```bash
+rm -rf chroma_data/
+rm -rf knowledge_base/
+```
+The bot will automatically generate completely fresh, blank directories the next time you drop a link or PDF into the Discord chat!
