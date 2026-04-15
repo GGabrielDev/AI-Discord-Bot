@@ -63,20 +63,37 @@ Available cache types: `f32`, `f16` (default), `bf16`, `q8_0`, `q4_0`, `q4_1`, `
 
 [RotorQuant](https://github.com/scrya-com/rotorquant) is a research project providing advanced KV cache compression via block-diagonal rotation. It requires building from a [custom llama.cpp fork](https://github.com/johndpope/llama-cpp-turboquant/tree/feature/planarquant-kv-cache).
 
+Because `turboquant` is just a fork of the regular `llama-server`, **it uses the exact same flags** (like `-c`, `--flash-attn`, and `--jinja`). The only difference is that turboquant mathematically unlocks the `iso3` options for your `--cache-type` flags instead of being limited to `q8_0`.
+
 ```bash
-# Build the RotorQuant fork
+# 1. Clone the RotorQuant fork
 git clone https://github.com/johndpope/llama-cpp-turboquant.git
 cd llama-cpp-turboquant && git checkout feature/planarquant-kv-cache
 
-# CUDA build
+# 2. Build the Server
+# 👉 FOR AMD GPUs / APUs (ROCm on Linux):
+cmake -B build -DGGML_HIPBLAS=ON -DCMAKE_BUILD_TYPE=Release && cmake --build build -j
+
+# 👉 FOR NVIDIA (Windows/Linux):
 cmake -B build -DGGML_CUDA=ON -DCMAKE_BUILD_TYPE=Release && cmake --build build -j
 
-# Run with RotorQuant KV cache
+# 👉 FOR MACS (Apple Silicon):
+cmake -B build -DGGML_METAL=ON -DCMAKE_BUILD_TYPE=Release && cmake --build build -j
+
+# 👉 UNIVERSAL FALLBACK (Vulkan for unsupported GPUs):
+cmake -B build -DGGML_VULKAN=ON -DCMAKE_BUILD_TYPE=Release && cmake --build build -j
+
+# 3. Run with RotorQuant KV cache (10x compression!)
 ./build/bin/llama-server \
-  -m /path/to/model.gguf \
-  --jinja -ngl 99 \
-  --cache-type-k iso3 --cache-type-v iso3 \
-  --host 0.0.0.0 --port 8080
+  -m /path/to/gemma-4-E4B-it-UD-Q8_K_XL.gguf \
+  --jinja \
+  -ngl 99 \
+  -c 32768 \
+  --flash-attn on \
+  --cache-type-k iso3 \
+  --cache-type-v iso3 \
+  --host 0.0.0.0 \
+  --port 8080
 ```
 
 | Config | PPL (Llama 3.1 8B) | Compression | Speed |
