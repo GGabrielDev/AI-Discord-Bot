@@ -2,6 +2,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 import asyncio
+import io
 import chromadb
 from agent.loop import run_autonomous_loop
 from query import answer_question
@@ -75,23 +76,43 @@ async def research(interaction: discord.Interaction, subject: str, iterations: i
 @bot.tree.command(name="ask", description="Query your research database for answers.")
 @app_commands.describe(
     topic="Select an existing research project.",
-    question="What do you want to know?"
+    question="What do you want to know?",
+    mode="Select internal analysis strategy (Fast/Balanced/Thorough)."
 )
-@app_commands.autocomplete(topic=topic_autocomplete) # THE MAGIC LINE
-async def ask(interaction: discord.Interaction, topic: str, question: str):
-    await interaction.response.defer() # Gives the AI time to think
+@app_commands.autocomplete(topic=topic_autocomplete)
+@app_commands.choices(mode=[
+    app_commands.Choice(name="Fast (Single query, 10 chunks, ~5s)", value="Fast"),
+    app_commands.Choice(name="Balanced (3 queries, ~30 chunks, ~15s)", value="Balanced"),
+    app_commands.Choice(name="Thorough (5 queries, ~60 chunks, ~40s)", value="Thorough")
+])
+async def ask(interaction: discord.Interaction, topic: str, question: str, mode: app_commands.Choice[str] = None):
+    # Acknowledge the command and set up for live edits
+    await interaction.response.defer()
     
-    answer = await answer_question(topic, question, num_results=10, show_sources=False)
+    # Extract string from choice, default to Balanced
+    mode_val = mode.value if mode else "Balanced"
     
-    response = (
+    async def discord_status_logger(message: str):
+        # We edit the deferred response to show progress
+        await interaction.edit_original_response(content=f"### 🧠 Intelligence Report: {topic}\n> **Q:** {question}\n\n{message}")
+    
+    # 1. Run the massive multi-query pipeline (this will take time)
+    answer = await answer_question(topic, question, mode=mode_val, log_func=discord_status_logger)
+    
+    # 2. Package the response as a downloadable Markdown file
+    markdown_bytes = io.BytesIO(answer.encode('utf-8'))
+    file_attachment = discord.File(markdown_bytes, filename=f"{topic}_Report.md")
+    
+    # 3. Deliver final message with the attachment
+    final_text = (
         f"### 🧠 Intelligence Report: {topic}\n"
-        f"> **Q:** {question}\n"
-        f"---\n"
-        f"{answer}\n"
-        f"---\n"
-        f"*Source: Local RAG Archive*"
+        f"> **Q:** {question}\n\n"
+        f"✅ **Analysis Complete ({mode_val} Mode).** \n"
+        f"Because Discord limits message sizes, your comprehensive report has been elegantly formatted as the attached `.md` file. "
+        f"Open it in any text editor or markdown viewer!"
     )
-    await interaction.followup.send(response)
+    
+    await interaction.edit_original_response(content=final_text, attachments=[file_attachment])
 
 # --- Sync Command (Admin only) ---
 @bot.command()

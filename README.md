@@ -56,7 +56,8 @@ This means the agent **gets smarter with each iteration** — it doesn't just re
 8. **Robust Web Scraping** — Streams content to enforce strict 150MB limits and verifies `Content-Type` immediately, preventing the agent from stalling on ISO files or slow connections.
 9. **Native PDF Parsing** — Extracts extremely accurate Markdown from research papers using `marker`.
 10. **Markdown Wikipedia** — Automatically generates a readable, locally browsable `knowledge_base/` linking all summarized articles by topic.
-11. **Collection Management** — Autocomplete for existing research topics in Discord
+11. **High-Recall Multi-Query RAG** — The `/ask` command supports *Fast, Balanced, and Thorough* modes, generating semantic variations of queries to recall up to 60+ chunks perfectly. Answers are formatted via a strict schema and attached as downloadable `.md` files to bypass Discord limits.
+12. **Collection Management** — Autocomplete for existing research topics in Discord
 
 ## Setup & Installation
 
