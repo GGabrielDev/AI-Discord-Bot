@@ -10,7 +10,7 @@ llama-server \
   --jinja \
   -ngl 99 \
   -c 32768 \
-  --flash-attn \
+  --flash-attn on \
   --cache-type-k q8_0 \
   --cache-type-v q8_0 \
   --host 0.0.0.0 \
@@ -25,7 +25,7 @@ llama-server \
 | `--jinja` | (flag) | **Required** for Gemma 4's chat template to work properly |
 | `-ngl 99` | 99 | Offload all layers to GPU. Reduce if you run out of VRAM |
 | `-c 32768` | 32K | Context window size. Gemma 4 E4B supports up to 128K, but 32K is a good balance of capability vs VRAM for research |
-| `--flash-attn` | (flag) | Enables Flash Attention. **Required** for KV cache quantization to work correctly |
+| `--flash-attn on` | `on` | Enables Flash Attention. **Required** for KV cache quantization to work correctly |
 | `--cache-type-k q8_0` | q8_0 | Quantize the K-cache to 8-bit. Minimal quality loss, significant VRAM savings |
 | `--cache-type-v q8_0` | q8_0 | Quantize the V-cache to 8-bit |
 | `--host 0.0.0.0` | Bind all interfaces | Makes the server accessible to the bot |

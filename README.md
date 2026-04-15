@@ -94,7 +94,7 @@ CHROMA_DB_PATH=./chroma_data
 llama-server \
   -m <path-to-model.gguf> \
   --jinja -ngl 99 -c 32768 \
-  --flash-attn --cache-type-k q8_0 --cache-type-v q8_0 \
+  --flash-attn on --cache-type-k q8_0 --cache-type-v q8_0 \
   --host 0.0.0.0 --port 8080
 ```
 
