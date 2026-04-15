@@ -1,15 +1,22 @@
-# Virtual Environments
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environment (venv built in project root)
 bin/
 lib/
-lib64/
+lib64
 include/
+share/
 pyvenv.cfg
-.venv/
-venv/
-env/
 
-# Database and Data
+# Environment variables
+.env
+
+# ChromaDB local data
 chroma_data/
 
-# Environment Variables
-.env
+# IDE
+.vscode/
+.idea/
