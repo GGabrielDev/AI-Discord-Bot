@@ -53,9 +53,6 @@ Discord (User Interface)
 - **Native Translation** — Force reports into any language (Spanish, French, etc.) while automatically preserving mathematical symbology and proper nouns
 - **Context Budget Protection** — Automatically truncates assembled context to stay within the model's context window
 - **Structured Reports** — Outputs standardized Markdown with Executive Summary, Comprehensive Analysis, Citations, and Knowledge Gaps sections
-
-### 🛠️ Utilities
-- **Retroactive Backfill (`/backfill_raw`)** — A powerful admin command that iterates through your existing Markdown Wikipedia, extracts the original source URLs, re-scrapes them, applies extreme text-compression, and injects the formerly missing granular raw data seamlessly into ChromaDB to repair legacy RAG pools.
 - **Discord Integration** — Large reports are packaged as downloadable `.md` file attachments
 
 ### 📚 Knowledge Base

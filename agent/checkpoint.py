@@ -158,7 +158,7 @@ def _chain_checkpoint_path(prompt: str) -> str:
 
 def save_chain_checkpoint(
     prompt: str,
-    original_save_to: str,
+    original_topic: str,
     iterations: int,
     depth: int,
     sub_topics: list[str],
@@ -170,7 +170,7 @@ def save_chain_checkpoint(
     
     state = {
         "prompt": prompt,
-        "save_to": original_save_to,
+        "save_to": original_topic,
         "iterations": iterations,
         "depth": depth,
         "sub_topics": sub_topics,
