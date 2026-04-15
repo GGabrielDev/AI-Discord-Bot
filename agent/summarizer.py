@@ -1,9 +1,14 @@
 from llm.client import LocalLLM
+from config.settings import LLM_CONTEXT_WINDOW
 
 # Max words to send per summarization call. 
 # Gemma 4 E4B can handle large contexts, but we keep it reasonable 
 # to get focused summaries and avoid overwhelming the model.
 MAX_WORDS_PER_CALL = 3000
+
+# Safety ceiling: max words we'll ever feed to the LLM in a single call.
+# Estimated at ~0.75 words per token, with 80% of the context window as headroom.
+MAX_INPUT_WORDS = int(LLM_CONTEXT_WINDOW * 0.75 * 0.8)
 
 
 async def summarize_page(raw_text: str, subject: str, url: str) -> str:
@@ -47,7 +52,9 @@ async def summarize_page(raw_text: str, subject: str, url: str) -> str:
         )
         
         print(f"[Summarizer] Analyzing {len(words)} words from {url}...")
-        summary = await llm.generate_text(system_prompt, user_prompt, temperature=0.3)
+        summary = await llm.generate_text_with_budget(
+            system_prompt, user_prompt, max_input_words=MAX_INPUT_WORDS, temperature=0.3
+        )
         return summary if summary else raw_text[:2000]  # Fallback to truncated raw if LLM fails
     
     # Long page: split into sections, summarize each, then consolidate
@@ -69,7 +76,9 @@ async def summarize_page(raw_text: str, subject: str, url: str) -> str:
         )
         
         print(f"[Summarizer] Processing section {idx + 1}/{len(sections)}...")
-        partial = await llm.generate_text(system_prompt, user_prompt, temperature=0.3)
+        partial = await llm.generate_text_with_budget(
+            system_prompt, user_prompt, max_input_words=MAX_INPUT_WORDS, temperature=0.3
+        )
         if partial:
             partial_summaries.append(partial)
     
@@ -96,10 +105,11 @@ async def summarize_page(raw_text: str, subject: str, url: str) -> str:
     consolidation_prompt += "Produce the final consolidated summary:"
     
     print(f"[Summarizer] Consolidating {len(partial_summaries)} section summaries...")
-    final_summary = await llm.generate_text(
+    final_summary = await llm.generate_text_with_budget(
         "You are a research editor. Consolidate multiple partial summaries into one cohesive document. "
         "Preserve all unique facts and remove duplicates.",
         consolidation_prompt,
+        max_input_words=MAX_INPUT_WORDS,
         temperature=0.3
     )
     
