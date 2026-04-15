@@ -17,6 +17,12 @@ pyvenv.cfg
 # ChromaDB local data
 chroma_data/
 
+# Generated research data
+knowledge_base/
+
+# Session checkpoint files
+checkpoints/
+
 # IDE
 .vscode/
 .idea/
