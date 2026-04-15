@@ -21,7 +21,7 @@ from llm.client import LocalLLM
 from agent.planner import generate_search_queries, evaluate_and_replan
 from agent.summarizer import summarize_page
 from agent.wiki_builder import store_article
-from agent.checkpoint import save_checkpoint, load_checkpoint, delete_checkpoint
+from agent.checkpoint import save_checkpoint, load_checkpoint, delete_checkpoint, check_soft_stop
 from tools.search import get_search_results
 from tools.scraper import scrape_text_from_url
 from storage.vectordb import VectorDB
@@ -165,6 +165,11 @@ async def run_autonomous_loop(subject, collection_name, max_iterations=3, depth=
         )
     
     for iteration in range(start_iteration, max_iterations + 1):
+        # Soft stop interrupt check
+        if check_soft_stop():
+            await report("🛑 **Soft Stop Acknowledged:** Halting loops, finalizing data...")
+            break
+            
         await report(f"\n🔄 **ITERATION {iteration}/{max_iterations}**")
         
         # Determine where to start within this iteration's queries

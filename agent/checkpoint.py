@@ -16,8 +16,23 @@ Architecture:
 import json
 import os
 from datetime import datetime
-
 CHECKPOINT_DIR = "checkpoints"
+SOFT_STOP_FLAG = os.path.join(CHECKPOINT_DIR, "SOFT_STOP.flag")
+
+def request_soft_stop():
+    """Drops a flag file to request a graceful exit of currently running loops."""
+    os.makedirs(CHECKPOINT_DIR, exist_ok=True)
+    with open(SOFT_STOP_FLAG, "w", encoding="utf-8") as f:
+        f.write("STOP_REQUESTED")
+    print("[Checkpoint] 🛑 Soft stop requested by user.")
+
+def check_soft_stop() -> bool:
+    """Checks if a soft stop was requested. If so, consumes the flag and returns True."""
+    if os.path.exists(SOFT_STOP_FLAG):
+        os.remove(SOFT_STOP_FLAG)
+        print("[Checkpoint] 🛑 Soft stop flag detected and consumed. Wrapping up iteration...")
+        return True
+    return False
 
 
 def _checkpoint_path(topic: str) -> str:

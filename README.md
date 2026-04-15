@@ -33,6 +33,7 @@ Discord (User Interface)
 - **Content Deduplication** — MD5 content hashing prevents the same information from being stored twice
 - **Crash Resilience** — JSON checkpoint system saves loop state after every URL, enabling seamless resume after blackouts or crashes
 - **Live Discord Dashboard** — Deep technical logs (PDF stats, memory chunks, parsing metrics) are streamed natively into Discord via dynamic message editing, completely mimicking the backend console without spamming channels
+- **Soft Stop Interrupts** — Use `/finish` at any time to gracefully wind down loops and wrap up active research sessions without corrupting data or discarding partial work.
 
 ### 🔗 Chain Research (`/chain_research`)
 - **Macro Decomposition** — Feed the bot a massive, unbounded prompt and the LLM will exhaustively slice it into non-redundant, highly focused sub-topics
@@ -40,12 +41,14 @@ Discord (User Interface)
 - **Macro Resilience** — Chain-level checkpoints securely save progress between sub-topics; a server crash during topic 4 means the agent instantly resumes at topic 4 upon reboot
 - **Knowledge Pooling** — Vector data from all chain branches are centralized into a single unified `save_to` database
 
-### 🧠 Knowledge Query (`/ask`)
+### 🧠 Knowledge Query & Agentic RAG (`/ask`)
 - **Multi-Query Retrieval** — Generates semantic variations of your question to maximize recall across the vector database
-- **Three Performance Modes:**
-  - **Fast** — Single query, 10 chunks, ~5 seconds
-  - **Balanced** — 3 queries, ~30 chunks, ~15 seconds
-  - **Thorough** — 5 queries, ~60 chunks, ~40 seconds
+- **Four Agentic Reasoning Modes:**
+  - **Fast** — Single query, 10 chunks, 0 auto-loops (~5 seconds)
+  - **Balanced** — 3 queries, 30 chunks, Max 1 auto-research loop (~15s+)
+  - **Thorough** — 5 queries, 60 chunks, Max 3 auto-research loops (~40s+)
+  - **Omniscient** — Uncapped gap-seeking. Dynamically spawns autonomous web agent loops to fill its own knowledge gaps indefinitely until the question is perfectly answered or `/finish` is triggered.
+- **Iterative Draft Refining** — By feeding the LLM its previous incomplete drafts alongside brand new gap-filling chunks, the agent inherently bypasses the context window limits, generating ever-growing multi-page documents!
 - **Native Translation** — Force reports into any language (Spanish, French, etc.) while automatically preserving mathematical symbology and proper nouns
 - **Context Budget Protection** — Automatically truncates assembled context to stay within the model's context window
 - **Structured Reports** — Outputs standardized Markdown with Executive Summary, Comprehensive Analysis, Citations, and Knowledge Gaps sections

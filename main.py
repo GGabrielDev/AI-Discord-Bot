@@ -40,7 +40,7 @@ async def topic_autocomplete(
     except Exception:
         return []
 
-from agent.checkpoint import load_checkpoint, load_chain_checkpoint, save_chain_checkpoint, delete_chain_checkpoint
+from agent.checkpoint import load_checkpoint, load_chain_checkpoint, save_chain_checkpoint, delete_chain_checkpoint, request_soft_stop
 from agent.planner import decompose_chain_prompt
 
 # --- Slash Commands ---
@@ -102,6 +102,11 @@ async def research(interaction: discord.Interaction, subject: str, iterations: i
         await interaction.followup.send(f"🏁 **Mission Complete.** {count} sources archived in `{collection}`.")
     except Exception as e:
         await interaction.channel.send(f"🚨 **CRITICAL SYSTEM ERROR:** ```{e}```")
+
+@bot.tree.command(name="finish", description="Soft-Stop: Gracefully wind down all running researches and chains after current iterations.")
+async def finish(interaction: discord.Interaction):
+    request_soft_stop()
+    await interaction.response.send_message("🛑 **Soft Stop Requested:** The agent will gracefully wrap up its current active loop and finalize its reports. No new loops will be started.")
 
 @bot.tree.command(name="chain_research", description="Decompose a massive prompt into multiple sub-topics and research them in an automated chain.")
 @app_commands.describe(
@@ -184,9 +189,10 @@ async def chain_research(interaction: discord.Interaction, prompt: str, save_to:
 )
 @app_commands.autocomplete(topic=topic_autocomplete)
 @app_commands.choices(mode=[
-    app_commands.Choice(name="Fast (Single query, 10 chunks, ~5s)", value="Fast"),
-    app_commands.Choice(name="Balanced (3 queries, ~30 chunks, ~15s)", value="Balanced"),
-    app_commands.Choice(name="Thorough (5 queries, ~60 chunks, ~40s)", value="Thorough")
+    app_commands.Choice(name="Fast (Single query, 0 auto-loops, ~5s)", value="Fast"),
+    app_commands.Choice(name="Balanced (3 queries, Max 1 auto-loop, ~15s+)", value="Balanced"),
+    app_commands.Choice(name="Thorough (5 queries, Max 3 auto-loops, ~40s+)", value="Thorough"),
+    app_commands.Choice(name="Omniscient (Uncapped gap-seeking, auto-loops until perfect)", value="Omniscient")
 ])
 async def ask(interaction: discord.Interaction, topic: str, question: str, mode: app_commands.Choice[str] = None, language: str = "English"):
     # Acknowledge the command and set up for live edits

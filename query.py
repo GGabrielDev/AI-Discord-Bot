@@ -1,8 +1,10 @@
 import argparse
 import asyncio
+import re
 from storage.vectordb import VectorDB
 from llm.client import LocalLLM
 from config.settings import LLM_CONTEXT_WINDOW
+from agent.checkpoint import check_soft_stop
 
 # Safety ceiling for context fed to the LLM during /ask synthesis.
 # Estimated at ~0.75 words per token, with 80% headroom for system prompt + generation.
@@ -31,10 +33,46 @@ async def _expand_query(llm: LocalLLM, question: str, num_variations: int) -> li
     # Cap to requested amount and append original
     return [question] + variations[:num_variations]
 
-async def answer_question(topic: str, question: str, mode: str = "Balanced", log_func=None, language: str = "English") -> str:
-    """Answers a question pulling from the vector DB, adapting exhaustiveness based on mode."""
+async def extract_gap_queries(llm: LocalLLM, answer_markdown: str) -> list[str]:
+    """Isolates the Knowledge Gaps section and politely extracts them into actionable search queries."""
+    # Find everything under '## Knowledge Gaps'
+    match = re.search(r"## Knowledge Gaps\n(.*?)(?=\n##|\Z)", answer_markdown, re.DOTALL | re.IGNORECASE)
+    if not match:
+        return []
+        
+    gaps_text = match.group(1).strip()
+    # Check if empty or explicitly states "no gaps"
+    if not gaps_text or "none identified" in gaps_text.lower() or "no significant gaps" in gaps_text.lower():
+        return []
+        
+    system_prompt = (
+        "You are an AI research extraction tool. Read the provided 'Knowledge Gaps' text. "
+        "Formulate highly specific web search queries to find the missing information. "
+        "Keep queries concise. Return ONLY a valid JSON object with key 'queries' containing a list of strings. "
+        "If the text indicates there are no gaps, return an empty list."
+    )
+    user_prompt = f"Knowledge Gaps Text:\n{gaps_text}\n\nExtract search queries to solve these gaps."
+    
+    result = await llm.generate_json(system_prompt, user_prompt)
+    if result and "queries" in result:
+        return result["queries"]
+    return []
+
+async def answer_question(topic: str, question: str, mode: str = "Balanced", log_func=None, language: str = "English", _current_auto_loop: int = 0, _draft: str = None) -> str:
+    """Answers a question pulling from the vector DB, with true Agentic RAG auto-looping for explicitly identified gaps."""
+    # Import here to avoid circular imports if query.py is loaded first
+    from agent.loop import run_autonomous_loop
+    
     db = VectorDB(collection_name=topic)
     llm = LocalLLM()
+    
+    # Mode Constraints
+    mode_limits = {"Fast": 0, "Balanced": 1, "Thorough": 3, "Omniscient": 999}
+    max_auto_loops = mode_limits.get(mode, 1)
+    
+    # 1. Fetch chunks or use just a tight cluster if Refining Draft
+    num_queries = 1 if mode == "Fast" else (5 if mode in ["Thorough", "Omniscient"] else 3)
+    chunk_budget = 10 if mode == "Fast" else (60 if mode in ["Thorough", "Omniscient"] else 30)
     
     async def log(msg: str):
         if log_func:
@@ -99,42 +137,115 @@ async def answer_question(topic: str, question: str, mode: str = "Balanced", log
     if len(context_words) > MAX_CONTEXT_WORDS:
         await log(f"⚠️ Context exceeds budget ({len(context_words):,} words). Truncating to {MAX_CONTEXT_WORDS:,} words to protect model stability.")
         context_text = " ".join(context_words[:MAX_CONTEXT_WORDS]) + "\n\n[... context truncated for model budget]"
-    
-    # 4. Standardized Markdown Synthesis (Schema Enforcer)
-    system_prompt = (
-        "You are an elite, highly technical research analyst generating intelligence reports from raw database extracts.\n"
-        "Your sole task is to answer the user's question exhaustively using ONLY the provided context.\n\n"
-        "You MUST structure your response into the following EXACT Markdown sections without deviation:\n\n"
-        "## Executive Summary\n"
-        "(A direct, concise overarching answer to the question.)\n\n"
-        "## Comprehensive Analysis\n"
-        "(A thorough, highly detailed deep-dive referencing the granular data points in the context.)\n\n"
-        "## Citations\n"
-        "(Explicitly list which sources support the claims.)\n\n"
-        "## Knowledge Gaps\n"
-        "(Explicitly list what limits were found in the context or if parts of the question could not be fully answered.)\n\n"
-        "Rules:\n"
-        "- Never hallucinate or synthesize information outside the context.\n"
-        "- If sources contradict, explicitly detail the contradiction.\n"
-        "- Keep the formatting perfectly clean Markdown."
-    )
-    
-    if language.lower() != "english":
-        system_prompt += (
-            f"\n\nCRITICAL INSTRUCTION: You MUST write your entire final response natively in {language.capitalize()}. "
-            f"However, you must act intelligently: preserve proper nouns, mathematical symbology, "
-            f"and highly specific technical industry terms in their original form without forcing a translation."
-        )
-    
+        
     source_list = "\n".join([f"  - {url}" for url in sources_seen])
-    user_prompt = (
-        f"CONTEXT FROM RESEARCH:\n"
-        f"{context_text}\n\n"
-        f"SOURCES CONSULTED:\n{source_list}\n\n"
-        f"USER QUESTION: {question}"
-    )
+    
+    # 4. Standardized Markdown Synthesis OR Draft Refining
+    if _draft:
+        system_prompt = (
+            "You are an elite, highly technical research analyst refining an intelligence report.\n"
+            "Below is your PREVIOUS incomplete draft. You are also given brand NEW CONTEXT from targeted research designed to fill the draft's Knowledge Gaps.\n\n"
+            "Your task is to merge the new context into the report organically. Expand the 'Comprehensive Analysis', integrate citations, "
+            "and meticulously remove the Knowledge Gaps that the new tracking data has resolved.\n\n"
+            "Maintain the EXACT formatting schema:\n"
+            "## Executive Summary\n## Comprehensive Analysis\n## Citations\n## Knowledge Gaps\n\n"
+            "Rules:\n"
+            "- If all gaps are filled, explicitly write 'None identified.' under ## Knowledge Gaps.\n"
+            "- Never hallucinate."
+        )
+        user_prompt = (
+            f"=== NEW CONTEXT ===\n{context_text}\n\n"
+            f"=== NEW SOURCES ===\n{source_list}\n\n"
+            f"=== PREVIOUS DRAFT TO UPDATE ===\n{_draft}\n\n"
+            f"USER QUESTION: {question}\n\n"
+            "Update the draft using ONLY the new context."
+        )
+    else:
+        system_prompt = (
+            "You are an elite, highly technical research analyst generating intelligence reports from raw database extracts.\n"
+            "Your sole task is to answer the user's question exhaustively using ONLY the provided context.\n\n"
+            "You MUST structure your response into the following EXACT Markdown sections without deviation:\n\n"
+            "## Executive Summary\n"
+            "(A direct, concise overarching answer to the question.)\n\n"
+            "## Comprehensive Analysis\n"
+            "(A thorough, highly detailed deep-dive referencing the granular data points in the context.)\n\n"
+            "## Citations\n"
+            "(Explicitly list which sources support the claims.)\n\n"
+            "## Knowledge Gaps\n"
+            "(Explicitly list what limits were found in the context or if parts of the question could not be fully answered.)\n\n"
+            "Rules:\n"
+            "- Never hallucinate or synthesize information outside the context.\n"
+            "- If sources contradict, explicitly detail the contradiction.\n"
+            "- Keep the formatting perfectly clean Markdown."
+        )
+        
+        if language.lower() != "english":
+            system_prompt += (
+                f"\n\nCRITICAL INSTRUCTION: You MUST write your entire final response natively in {language.capitalize()}. "
+                f"However, you must act intelligently: preserve proper nouns, mathematical symbology, "
+                f"and highly specific technical industry terms in their original form without forcing a translation."
+            )
+            
+        user_prompt = (
+            f"CONTEXT FROM RESEARCH:\n"
+            f"{context_text}\n\n"
+            f"SOURCES CONSULTED:\n{source_list}\n\n"
+            f"USER QUESTION: {question}"
+        )
 
-    answer = await llm.generate_text(system_prompt, user_prompt, temperature=0.3, max_tokens=8192, timeout_override=600) # Give 8192 output tokens and 600s timeout since context is massive
+    answer = await llm.generate_text(system_prompt, user_prompt, temperature=0.3, max_tokens=8192, timeout_override=600)
+    
+    # 5. End if Fast mode or max auto-loops hit
+    if _current_auto_loop >= max_auto_loops:
+        return answer
+        
+    # Check Soft Stop
+    if check_soft_stop():
+        async def log(msg):
+            if log_func: await log_func(msg)
+        await log("🛑 **Soft Stop Acknowledged:** Halting Agentic gaps auto-loop early. Returning final draft.")
+        return answer
+        
+    # 6. Extract Gaps and Agentic RAG Re-research
+    gap_queries = await extract_gap_queries(llm, answer)
+    
+    if gap_queries:
+        async def log(msg):
+            if log_func: await log_func(msg)
+            
+        await log(f"⚠️ **Knowledge Gaps detected.** Auto-initiating targeted research loop (Iteration {_current_auto_loop + 1}/{max_auto_loops if max_auto_loops < 999 else '∞'})...")
+        await log(f"🎯 *Formulating Gap Chain:* {', '.join(gap_queries)}")
+        
+        for idx, gap_query in enumerate(gap_queries):
+            # Soft stop inter-query check
+            if check_soft_stop():
+                await log("🛑 **Soft Stop Acknowledged:** Gracefully abandoning remaining gap queries.")
+                break
+                
+            await log(f"🚀 *Gap Tracker {idx+1}/{len(gap_queries)}* -> `{gap_query}`")
+            # Deep depth (5) but extremely narrow (1 iteration) directly into the topic pool
+            try:
+                await run_autonomous_loop(
+                    subject=gap_query,
+                    collection_name=topic,
+                    max_iterations=1,
+                    depth=5,
+                    log_func=log_func
+                )
+            except Exception as e:
+                await log(f"🚨 Sub-tracker failed on `{gap_query}`: {e}")
+                
+        # We researched everything! Now structurally pull that new data and re-evaluate the draft
+        await log("♻️ **Draft Refinement phase:** Merging heavily targeted gap data into intelligence report...")
+        return await answer_question(
+            topic=topic,
+            question=question,
+            mode=mode,
+            log_func=log_func,
+            language=language,
+            _current_auto_loop=_current_auto_loop + 1,
+            _draft=answer
+        )
     
     return answer
 
