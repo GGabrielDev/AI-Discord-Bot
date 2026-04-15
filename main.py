@@ -206,10 +206,13 @@ async def ask(interaction: discord.Interaction, topic: str, question: str, mode:
     # Extract string from choice, default to Balanced
     mode_val = mode.value if mode else "Balanced"
     
-    async def discord_status_logger(message: str):
+    async def discord_status_logger(message: str, is_sub_step: bool = False):
         # We edit the deferred response to show progress
         try:
-            await interaction.edit_original_response(content=f"### 🧠 Intelligence Report: {topic}\n> **Q:** {question}\n\n{message}")
+            # We ignore is_sub_step for the ask dashboard, but we must accept the argument
+            # since loop.py provides it.
+            prefix = "> ↳ " if is_sub_step else "> "
+            await interaction.edit_original_response(content=f"### 🧠 Intelligence Report: {topic}\n> **Q:** {question}\n\n{prefix}{message}")
         except discord.errors.HTTPException:
             # Interaction token expired during massive agentic gap loops. 
             pass

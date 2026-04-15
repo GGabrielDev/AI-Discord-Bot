@@ -75,6 +75,7 @@ async def answer_question(topic: str, question: str, mode: str = "Balanced", log
     chunk_budget = 10 if mode == "Fast" else (60 if mode in ["Thorough", "Omniscient"] else 30)
     
     async def log(msg: str):
+        print(msg)
         if log_func:
             await log_func(msg)
         else:
@@ -201,28 +202,30 @@ async def answer_question(topic: str, question: str, mode: str = "Balanced", log
         
     # Check Soft Stop
     if check_soft_stop():
-        async def log(msg):
-            if log_func: await log_func(msg)
-        await log("🛑 **Soft Stop Acknowledged:** Halting Agentic gaps auto-loop early. Returning final draft.")
+        async def loc_log(m):
+            print(m)
+            if log_func: await log_func(m)
+        await loc_log("🛑 **Soft Stop Acknowledged:** Halting Agentic gaps auto-loop early. Returning final draft.")
         return answer
         
     # 6. Extract Gaps and Agentic RAG Re-research
     gap_queries = await extract_gap_queries(llm, answer)
     
     if gap_queries:
-        async def log(msg):
-            if log_func: await log_func(msg)
+        async def loc_log(m):
+            print(m)
+            if log_func: await log_func(m)
             
-        await log(f"⚠️ **Knowledge Gaps detected.** Auto-initiating targeted research loop (Iteration {_current_auto_loop + 1}/{max_auto_loops if max_auto_loops < 999 else '∞'})...")
-        await log(f"🎯 *Formulating Gap Chain:* {', '.join(gap_queries)}")
+        await loc_log(f"⚠️ **Knowledge Gaps detected.** Auto-initiating targeted research loop (Iteration {_current_auto_loop + 1}/{max_auto_loops if max_auto_loops < 999 else '∞'})...")
+        await loc_log(f"🎯 *Formulating Gap Chain:* {', '.join(gap_queries)}")
         
         for idx, gap_query in enumerate(gap_queries):
             # Soft stop inter-query check
             if check_soft_stop():
-                await log("🛑 **Soft Stop Acknowledged:** Gracefully abandoning remaining gap queries.")
+                await loc_log("🛑 **Soft Stop Acknowledged:** Gracefully abandoning remaining gap queries.")
                 break
                 
-            await log(f"🚀 *Gap Tracker {idx+1}/{len(gap_queries)}* -> `{gap_query}`")
+            await loc_log(f"🚀 *Gap Tracker {idx+1}/{len(gap_queries)}* -> `{gap_query}`")
             # Deep depth (5) but extremely narrow (1 iteration) directly into the topic pool
             try:
                 await run_autonomous_loop(
@@ -233,10 +236,10 @@ async def answer_question(topic: str, question: str, mode: str = "Balanced", log
                     log_func=log_func
                 )
             except Exception as e:
-                await log(f"🚨 Sub-tracker failed on `{gap_query}`: {e}")
+                await loc_log(f"🚨 Sub-tracker failed on `{gap_query}`: {e}")
                 
         # We researched everything! Now structurally pull that new data and re-evaluate the draft
-        await log("♻️ **Draft Refinement phase:** Merging heavily targeted gap data into intelligence report...")
+        await loc_log("♻️ **Draft Refinement phase:** Merging heavily targeted gap data into intelligence report...")
         return await answer_question(
             topic=topic,
             question=question,
