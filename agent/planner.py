@@ -79,6 +79,38 @@ async def evaluate_and_replan(subject: str, existing_knowledge: list[str], stats
         return fallback, "Re-planning failed; using fresh queries."
 
 
+async def decompose_chain_prompt(prompt: str) -> list[str]:
+    """Takes a massive initial prompt, extracts all specific sub-topics/subjects, and deduplicates them.
+    
+    Returns a list of strings representing highly specific research subjects.
+    No artificial limits are placed on the number of extracted topics.
+    """
+    llm = LocalLLM()
+    
+    system_prompt = (
+        "You are an elite research director. The user has provided a massive, overarching research goal. "
+        "Your task is to exhaustively break this master prompt down into distinct, highly specific sub-topics.\n\n"
+        "Rules:\n"
+        "1. Extract AS MANY distinct sub-topics as necessary to fully cover the user's request. Do not artificially limit the number.\n"
+        "2. Ensure zero redundancy. Each sub-topic must target a uniquely different aspect of the prompt.\n"
+        "3. Format each sub-topic as a concise noun-phrase or question suitable as an autonomous research subject.\n\n"
+        "Return ONLY a valid JSON object with a single key 'sub_topics' containing a list of strings.\n"
+        "Example: {\"sub_topics\": [\"Topic 1\", \"Topic 2\", \"Topic 3\"]}"
+    )
+    
+    user_prompt = f"MASTER PROMPT:\n{prompt}\n\nDecompose this prompt into an exhaustive list of non-redundant sub-topics. Output strictly valid JSON."
+    
+    print(f"[Planner] Decomposing chain prompt: '{prompt[:50]}...'")
+    result = await llm.generate_json(system_prompt, user_prompt)
+    
+    if result and "sub_topics" in result:
+        sub_topics = result["sub_topics"]
+        print(f"[Planner] Successfully decomposed chain into {len(sub_topics)} sub-topics.")
+        return sub_topics
+    else:
+        print("[Planner] Failed to parse decomposed chain. Using single prompt as fallback.")
+        return [prompt]
+
 # Quick manual test
 if __name__ == "__main__":
     topic = "The history of TTL logic chips and their modern applications"
