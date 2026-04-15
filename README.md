@@ -91,8 +91,14 @@ CHROMA_DB_PATH=./chroma_data
 
 **5. Start llama-server:**
 ```bash
-llama-server -m <path-to-model.gguf> --jinja -ngl 99 --host 0.0.0.0 --port 8080
+llama-server \
+  -m <path-to-model.gguf> \
+  --jinja -ngl 99 -c 32768 \
+  --flash-attn --cache-type-k q8_0 --cache-type-v q8_0 \
+  --host 0.0.0.0 --port 8080
 ```
+
+> See [docs/llama_server.md](docs/llama_server.md) for a full configuration guide including RotorQuant KV cache compression, context sizing, and troubleshooting.
 
 **6. Run the bot:**
 ```bash
