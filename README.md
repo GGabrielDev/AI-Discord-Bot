@@ -56,8 +56,8 @@ When a research session is interrupted (power outage, network failure, OOM crash
 
 ### 🛡️ Hardware-Aware Optimizations
 Designed for constrained hardware (tested on AMD BC-250 with 14.75GB unified memory):
-- **Marker Model Caching** — Deep learning OCR models load once and persist for the entire bot session (~1.3GB, 30s initial load, instant reuse)
-- **CPU-Only PDF Processing** — Forces PyTorch to CPU to prevent OOM conflicts with llama-server's GPU memory allocation
+- **Two-Tier PDF Extraction** — Lightweight PyMuPDF (~5MB RAM) by default; deep learning Marker OCR (~1.3GB RAM) available as opt-in for complex layouts
+- **CPU-Only Processing** — When Marker is enabled, forces PyTorch to CPU to prevent OOM conflicts with llama-server's GPU memory
 - **Context Budget Enforcement** — All LLM calls enforce word-count ceilings to prevent context window overflow
 - **Fully Async Pipeline** — Scraper, search, and PDF parsing all run without blocking the Discord event loop
 - **Token Usage Tracking** — Every LLM call logs prompt/completion token counts with running session totals
@@ -90,6 +90,12 @@ source bin/activate
 CFLAGS="-Wno-incompatible-pointer-types" pip install -r requirements.txt
 ```
 > **Note:** The `CFLAGS` prefix is required on systems with GCC 15+ (e.g., CachyOS, Arch) to bypass strict pointer-type warnings in Pillow's C extensions. The requirements file also forces CPU-only PyTorch to save ~5GB of unnecessary CUDA binaries.
+
+**Optional — Enable deep learning PDF extraction (Marker):**
+```bash
+pip install marker-pdf[full]
+```
+> **⚠️ Warning:** Marker requires ~1.3GB of RAM for model weights plus additional memory for inference. On memory-constrained systems running llama-server concurrently, this **will** cause OOM kills. Only enable if you have sufficient free RAM (8GB+ recommended beyond what llama-server uses). To activate, add `ENABLE_MARKER_PDF=1` to your `.env` file.
 
 **4. Configure environment variables:**
 

@@ -10,8 +10,13 @@ chromadb
 # --- Scraping & HTTP Clients ---
 httpx[brotli,http2]
 beautifulsoup4
-marker-pdf[full]
 pydantic
+
+# --- PDF Extraction ---
+pymupdf                    # Lightweight text extraction (~5MB RAM, default)
+# marker-pdf[full]         # Deep learning extraction (~1.3GB RAM, optional)
+                           # Install separately: pip install marker-pdf[full]
+                           # Enable with: ENABLE_MARKER_PDF=1
 
 # --- AI & LLM Integration ---
 openai>=1.0.0
