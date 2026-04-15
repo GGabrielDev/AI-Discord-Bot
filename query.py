@@ -31,7 +31,7 @@ async def _expand_query(llm: LocalLLM, question: str, num_variations: int) -> li
     # Cap to requested amount and append original
     return [question] + variations[:num_variations]
 
-async def answer_question(topic: str, question: str, mode: str = "Balanced", log_func=None):
+async def answer_question(topic: str, question: str, mode: str = "Balanced", log_func=None, language: str = "English") -> str:
     """Answers a question pulling from the vector DB, adapting exhaustiveness based on mode."""
     db = VectorDB(collection_name=topic)
     llm = LocalLLM()
@@ -118,6 +118,13 @@ async def answer_question(topic: str, question: str, mode: str = "Balanced", log
         "- If sources contradict, explicitly detail the contradiction.\n"
         "- Keep the formatting perfectly clean Markdown."
     )
+    
+    if language.lower() != "english":
+        system_prompt += (
+            f"\n\nCRITICAL INSTRUCTION: You MUST write your entire final response natively in {language.capitalize()}. "
+            f"However, you must act intelligently: preserve proper nouns, mathematical symbology, "
+            f"and highly specific technical industry terms in their original form without forcing a translation."
+        )
     
     source_list = "\n".join([f"  - {url}" for url in sources_seen])
     user_prompt = (

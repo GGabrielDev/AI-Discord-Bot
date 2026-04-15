@@ -179,7 +179,8 @@ async def chain_research(interaction: discord.Interaction, prompt: str, save_to:
 @app_commands.describe(
     topic="Select an existing research project.",
     question="What do you want to know?",
-    mode="Select internal analysis strategy (Fast/Balanced/Thorough)."
+    mode="Select internal analysis strategy (Fast/Balanced/Thorough).",
+    language="Optional: Force output language (e.g. Spanish, French). Defaults to English."
 )
 @app_commands.autocomplete(topic=topic_autocomplete)
 @app_commands.choices(mode=[
@@ -187,7 +188,7 @@ async def chain_research(interaction: discord.Interaction, prompt: str, save_to:
     app_commands.Choice(name="Balanced (3 queries, ~30 chunks, ~15s)", value="Balanced"),
     app_commands.Choice(name="Thorough (5 queries, ~60 chunks, ~40s)", value="Thorough")
 ])
-async def ask(interaction: discord.Interaction, topic: str, question: str, mode: app_commands.Choice[str] = None):
+async def ask(interaction: discord.Interaction, topic: str, question: str, mode: app_commands.Choice[str] = None, language: str = "English"):
     # Acknowledge the command and set up for live edits
     await interaction.response.defer()
     
@@ -199,7 +200,7 @@ async def ask(interaction: discord.Interaction, topic: str, question: str, mode:
         await interaction.edit_original_response(content=f"### 🧠 Intelligence Report: {topic}\n> **Q:** {question}\n\n{message}")
     
     # 1. Run the massive multi-query pipeline (this will take time)
-    answer = await answer_question(topic, question, mode=mode_val, log_func=discord_status_logger)
+    answer = await answer_question(topic, question, mode=mode_val, log_func=discord_status_logger, language=language)
     
     # 2. Package the response as a downloadable Markdown file
     markdown_bytes = io.BytesIO(answer.encode('utf-8'))

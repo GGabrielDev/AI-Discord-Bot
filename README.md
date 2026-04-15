@@ -46,6 +46,7 @@ Discord (User Interface)
   - **Fast** — Single query, 10 chunks, ~5 seconds
   - **Balanced** — 3 queries, ~30 chunks, ~15 seconds
   - **Thorough** — 5 queries, ~60 chunks, ~40 seconds
+- **Native Translation** — Force reports into any language (Spanish, French, etc.) while automatically preserving mathematical symbology and proper nouns
 - **Context Budget Protection** — Automatically truncates assembled context to stay within the model's context window
 - **Structured Reports** — Outputs standardized Markdown with Executive Summary, Comprehensive Analysis, Citations, and Knowledge Gaps sections
 - **Discord Integration** — Large reports are packaged as downloadable `.md` file attachments
