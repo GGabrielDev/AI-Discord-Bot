@@ -11,9 +11,13 @@ HEADERS = {
 MAX_HTML_SIZE = 10 * 1024 * 1024
 MAX_PDF_SIZE = 150 * 1024 * 1024
 
-async def scrape_text_from_url(url: str, timeout: int = 15) -> str:
+async def scrape_text_from_url(url: str, timeout: int = 15, log_func=None) -> str:
     """Safely streams a URL, checks content type, and extracts pure readable text or PDF markdown."""
-    print(f"[Scraper] Connecting to: {url}")
+    async def log(msg):
+        print(msg)
+        if log_func: await log_func(msg)
+
+    await log(f"[Scraper] Connecting to: {url}")
     
     try:
         async with httpx.AsyncClient(headers=HEADERS, timeout=timeout, follow_redirects=True, http2=True) as client:
@@ -23,32 +27,32 @@ async def scrape_text_from_url(url: str, timeout: int = 15) -> str:
                 content_type = response.headers.get("Content-Type", "").lower()
                 
                 if "application/pdf" in content_type:
-                    print(f"[Scraper] 📄 PDF detected. Initiating secure stream...")
-                    return await _stream_and_process_pdf(response)
+                    await log(f"[Scraper] 📄 PDF detected. Initiating secure stream...")
+                    return await _stream_and_process_pdf(response, log)
                 
                 elif "text/html" in content_type or "text/plain" in content_type:
-                    print(f"[Scraper] 🌐 HTML text detected. Initiating secure stream...")
-                    return await _stream_and_process_html(response)
+                    await log(f"[Scraper] 🌐 HTML text detected. Initiating secure stream...")
+                    return await _stream_and_process_html(response, log)
                     
                 else:
-                    print(f"[Scraper] ⚠️ Unsupported content type skipped: {content_type}")
+                    await log(f"[Scraper] ⚠️ Unsupported content type skipped: {content_type}")
                     return ""
                     
     except httpx.TimeoutException:
-        print(f"[Scraper] Warning: Timed out waiting for {url}")
+        await log(f"[Scraper] Warning: Timed out waiting for {url}")
         return ""
     except Exception as e:
-        print(f"[Scraper] Failed to scrape {url}: {e}")
+        await log(f"[Scraper] Failed to scrape {url}: {e}")
         return ""
 
-async def _stream_and_process_html(response: httpx.Response) -> str:
+async def _stream_and_process_html(response: httpx.Response, log_func) -> str:
     """Streams up to limits, truncates if over, parses HTML gracefully."""
     downloaded_bytes = bytearray()
     
     async for chunk in response.aiter_bytes():
         downloaded_bytes.extend(chunk)
         if len(downloaded_bytes) > MAX_HTML_SIZE:
-            print(f"[Scraper] ⚠️ HTML size exceeded {MAX_HTML_SIZE//1024//1024}MB. Truncating.")
+            await log_func(f"[Scraper] ⚠️ HTML size exceeded {MAX_HTML_SIZE//1024//1024}MB. Truncating.")
             break
             
     html_content = downloaded_bytes.decode('utf-8', errors='ignore')
@@ -65,13 +69,13 @@ async def _stream_and_process_html(response: httpx.Response) -> str:
     
     # Very basic validation (e.g. Cloudflare captcha block check)
     if "Just a moment..." in clean_text and "Cloudflare" in html_content:
-        print("[Scraper] ⚠️ Blocked by Cloudflare.")
+        await log_func("[Scraper] ⚠️ Blocked by Cloudflare.")
         return ""
         
-    print(f"[Scraper] Successfully extracted {len(clean_text)} characters from HTML.")
+    await log_func(f"[Scraper] Successfully extracted {len(clean_text):,} characters from HTML.")
     return clean_text
 
-async def _stream_and_process_pdf(response: httpx.Response) -> str:
+async def _stream_and_process_pdf(response: httpx.Response, log_func) -> str:
     """Streams large PDFs directly to a temporary file, then parses them with marker."""
     downloaded_size = 0
     
@@ -87,11 +91,11 @@ async def _stream_and_process_pdf(response: httpx.Response) -> str:
             downloaded_size += len(chunk)
             
             if downloaded_size > MAX_PDF_SIZE:
-                print(f"[Scraper] ⚠️ PDF size exceeded {MAX_PDF_SIZE/1024/1024:.0f}MB. Truncating stream.")
+                await log_func(f"[Scraper] ⚠️ PDF size exceeded {MAX_PDF_SIZE/1024/1024:.0f}MB. Truncating stream.")
                 break
                 
     size_mb = downloaded_size / (1024 * 1024)
-    print(f"[Scraper] Successfully downloaded {size_mb:.2f}MB PDF to {temp_path}.")
+    await log_func(f"[Scraper] Successfully downloaded {size_mb:.2f}MB PDF. Parsing text...")
     
     # --- Marker processing will be called here ---
     from tools.pdf_parser import extract_markdown_from_pdf
@@ -100,9 +104,10 @@ async def _stream_and_process_pdf(response: httpx.Response) -> str:
     try:
         # Offload massive synchronous PyTorch loading to a background thread
         markdown_text = await asyncio.to_thread(extract_markdown_from_pdf, temp_path)
+        await log_func(f"[PDF Parser] Handled PDF via backend engines. Extracted {len(markdown_text):,} characters.")
         return markdown_text
     except Exception as e:
-        print(f"[Scraper] Failed to parse PDF with Marker: {e}")
+        await log_func(f"[Scraper] Failed to parse PDF extraction: {e}")
         return ""
     finally:
         if os.path.exists(temp_path):

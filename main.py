@@ -69,10 +69,24 @@ async def research(interaction: discord.Interaction, subject: str, iterations: i
     else:
         await interaction.response.send_message(f"🏗️ **Building Research Environment for `{subject}`...**")
     
+    status_message = None
+    
     # This is the "Bridge" function
-    async def discord_logger(message):
-        # We use the interaction channel to send live updates
-        await interaction.channel.send(f"> {message}")
+    async def discord_logger(message, is_sub_step=False):
+        nonlocal status_message
+        try:
+            if not is_sub_step:
+                status_message = await interaction.channel.send(f"> {message}")
+            elif status_message:
+                # Append to the dashboard message
+                new_content = status_message.content + f"\n> ↳ {message}"
+                # Guard against Discord's 2000 char message limit
+                if len(new_content) > 1900:
+                    status_message = await interaction.channel.send(f"> ↳ {message} (continued...)")
+                else:
+                    await status_message.edit(content=new_content)
+        except Exception as e:
+            print(f"Discord logger failed: {e}")
 
     try:
         # We pass our logger into the loop

@@ -120,10 +120,10 @@ async def run_autonomous_loop(subject, collection_name, max_iterations=3, depth=
     """
     # This helper sends text to Discord if a log_func is provided, 
     # otherwise it just prints to the terminal.
-    async def report(msg):
+    async def report(msg, is_sub_step=False):
         print(msg)
         if log_func:
-            await log_func(msg)
+            await log_func(msg, is_sub_step)
 
     db = VectorDB(collection_name=collection_name)
     llm = LocalLLM()
@@ -182,20 +182,25 @@ async def run_autonomous_loop(subject, collection_name, max_iterations=3, depth=
                 url = res["url"]
                 if url in seen_urls: continue
                 
-                await report(f"🌐 *Scraping:* <{url}>")
-                text = await scrape_text_from_url(url)
+                await report(f"🌐 **Processing:** <{url}>", is_sub_step=False)
+                
+                # Pass a closure down into scraper and summarizer that edits the dashboard message
+                async def step_log(msg):
+                    await report(msg, is_sub_step=True)
+                
+                text = await scrape_text_from_url(url, log_func=step_log)
                 
                 if len(text) > 300:
                     # Content-level deduplication
                     text_hash = content_hash(text)
                     if text_hash in seen_hashes:
-                        await report(f"⏭️ *Duplicate content detected, skipping.*")
+                        await step_log(f"⏭️ *Duplicate content detected, skipping.*")
                         seen_urls.add(url)
                         continue
                     
                     # === SUMMARIZE: The LLM actually reads the content ===
-                    await report(f"🧠 *Summarizing content...*")
-                    summary = await summarize_page(text, subject, url)
+                    await step_log(f"🧠 *Summarizing content...*")
+                    summary = await summarize_page(text, subject, url, log_func=step_log)
                     
                     # Store the LLM summary as primary chunks
                     summary_chunks = chunk_text(summary)
@@ -206,7 +211,7 @@ async def run_autonomous_loop(subject, collection_name, max_iterations=3, depth=
                     
                     seen_urls.add(url)
                     seen_hashes.add(text_hash)
-                    await report(f"📥 *Stored {len(summary_chunks)} analyzed chunks in memory.*")
+                    await step_log(f"✅ *Success: Stored {len(summary_chunks)} analyzed chunks in memory.*")
                     
                     # === CHECKPOINT: Save state after each successfully processed URL ===
                     save_checkpoint(

@@ -11,7 +11,7 @@ MAX_WORDS_PER_CALL = 3000
 MAX_INPUT_WORDS = int(LLM_CONTEXT_WINDOW * 0.75 * 0.8)
 
 
-async def summarize_page(raw_text: str, subject: str, url: str) -> str:
+async def summarize_page(raw_text: str, subject: str, url: str, log_func=None) -> str:
     """Sends scraped text to the LLM to extract key facts and produce a structured summary.
     
     For long pages, the text is split into manageable sections and each is summarized
@@ -27,6 +27,10 @@ async def summarize_page(raw_text: str, subject: str, url: str) -> str:
     """
     llm = LocalLLM()
     words = raw_text.split()
+    
+    async def log(msg):
+        print(msg)
+        if log_func: await log_func(msg)
     
     system_prompt = (
         "You are a meticulous research analyst extracting information from a web page. "
@@ -51,7 +55,7 @@ async def summarize_page(raw_text: str, subject: str, url: str) -> str:
             f"Produce a structured summary."
         )
         
-        print(f"[Summarizer] Analyzing {len(words)} words from {url}...")
+        await log(f"[Summarizer] Analyzing {len(words):,} words from {url}...")
         summary = await llm.generate_text_with_budget(
             system_prompt, user_prompt, max_input_words=MAX_INPUT_WORDS, temperature=0.3
         )
@@ -63,7 +67,7 @@ async def summarize_page(raw_text: str, subject: str, url: str) -> str:
         section = " ".join(words[i:i + MAX_WORDS_PER_CALL])
         sections.append(section)
     
-    print(f"[Summarizer] Long page ({len(words)} words) — splitting into {len(sections)} sections...")
+    await log(f"[Summarizer] Long page ({len(words):,} words) — splitting into {len(sections)} sections...")
     
     partial_summaries = []
     for idx, section in enumerate(sections):
@@ -75,7 +79,7 @@ async def summarize_page(raw_text: str, subject: str, url: str) -> str:
             f"Extract all relevant information about '{subject}' from this section."
         )
         
-        print(f"[Summarizer] Processing section {idx + 1}/{len(sections)}...")
+        await log(f"[Summarizer] Processing section {idx + 1}/{len(sections)}...")
         partial = await llm.generate_text_with_budget(
             system_prompt, user_prompt, max_input_words=MAX_INPUT_WORDS, temperature=0.3
         )
@@ -83,7 +87,7 @@ async def summarize_page(raw_text: str, subject: str, url: str) -> str:
             partial_summaries.append(partial)
     
     if not partial_summaries:
-        print("[Summarizer] All section summaries failed. Returning truncated raw text.")
+        await log("[Summarizer] All section summaries failed. Returning truncated raw text.")
         return raw_text[:2000]
     
     # If only one section succeeded, return it directly
@@ -104,7 +108,7 @@ async def summarize_page(raw_text: str, subject: str, url: str) -> str:
     
     consolidation_prompt += "Produce the final consolidated summary:"
     
-    print(f"[Summarizer] Consolidating {len(partial_summaries)} section summaries...")
+    await log(f"[Summarizer] Consolidating {len(partial_summaries)} section summaries...")
     final_summary = await llm.generate_text_with_budget(
         "You are a research editor. Consolidate multiple partial summaries into one cohesive document. "
         "Preserve all unique facts and remove duplicates.",
