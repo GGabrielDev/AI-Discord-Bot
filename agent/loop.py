@@ -112,7 +112,7 @@ async def run_autonomous_loop(subject, collection_name, max_iterations=3, depth=
         
         for query in current_queries:
             await report(f"🔎 *Searching:* `{query}`")
-            results = get_search_results(query, max_results=depth)
+            results = await get_search_results(query, max_results=depth)
             
             for res in results:
                 url = res["url"]
