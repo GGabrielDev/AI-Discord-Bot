@@ -42,6 +42,12 @@ async def topic_autocomplete(
 
 from agent.checkpoint import load_checkpoint, load_chain_checkpoint, save_chain_checkpoint, delete_chain_checkpoint, request_soft_stop
 from agent.planner import decompose_chain_prompt
+import os
+import re
+from agent.wiki_builder import WIKI_ROOT
+from agent.summarizer import compress_raw_text, chunk_text
+from tools.scraper import scrape_text_from_url
+from storage.vectordb import VectorDB
 
 # --- Slash Commands ---
 
@@ -112,6 +118,52 @@ async def research(interaction: discord.Interaction, subject: str, iterations: i
 async def finish(interaction: discord.Interaction):
     request_soft_stop()
     await interaction.response.send_message("🛑 **Soft Stop Requested:** The agent will gracefully wrap up its current active loop and finalize its reports. No new loops will be started.")
+
+@bot.tree.command(name="backfill_raw", description="Admin: Retroactively scrape and inject compressed RAW text for an entire past research topic.")
+@app_commands.autocomplete(topic=topic_autocomplete)
+async def backfill_raw(interaction: discord.Interaction, topic: str):
+    await interaction.response.send_message(f"⚙️ **Backfill Initiated for `{topic}`.** Analyzing existing markdown index...")
+    
+    topic_dir = os.path.join(WIKI_ROOT, topic.replace(" ", "_").lower())
+    if not os.path.exists(topic_dir):
+        await interaction.channel.send(f"❌ Error: Topic `{topic}` not found in knowledge base.")
+        return
+        
+    urls_to_scrape = set()
+    
+    for filename in os.listdir(topic_dir):
+        if not filename.endswith(".md"):
+            continue
+            
+        filepath = os.path.join(topic_dir, filename)
+        with open(filepath, "r", encoding="utf-8") as f:
+            content = f.read()
+            match = re.search(r'\*\*Source URL:\*\* \[(.*?)\]', content)
+            if match:
+                urls_to_scrape.add(match.group(1))
+                
+    if not urls_to_scrape:
+        await interaction.channel.send("⚠️ No URLs found in the markdown files.")
+        return
+        
+    await interaction.channel.send(f"🔍 Found {len(urls_to_scrape)} unique URLs. Scraping & compressing raw data...")
+    db = VectorDB(collection_name=topic)
+    
+    success = 0
+    for dict_index, url in enumerate(urls_to_scrape):
+        try:
+            # We don't log to Discord heavily to avoid spam, just terminal
+            print(f"[Backfill] Processing {dict_index+1}/{len(urls_to_scrape)}: {url}")
+            text = await scrape_text_from_url(url)
+            if len(text) > 300:
+                compressed_raw = compress_raw_text(text)
+                raw_chunks = chunk_text(compressed_raw)
+                db.add_chunks(raw_chunks, url, chunk_type="raw")
+                success += 1
+        except Exception as e:
+            print(f"[Backfill] Failed on {url}: {e}")
+            
+    await interaction.channel.send(f"✅ **Backfill Complete:** Successfully injected raw, compressed chunks for {success}/{len(urls_to_scrape)} sources into `{topic}`.")
 
 @bot.tree.command(name="chain_research", description="Decompose a massive prompt into multiple sub-topics and research them in an automated chain.")
 @app_commands.describe(

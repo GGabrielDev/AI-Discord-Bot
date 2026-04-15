@@ -19,7 +19,7 @@ import hashlib
 import time
 from llm.client import LocalLLM
 from agent.planner import generate_search_queries, evaluate_and_replan
-from agent.summarizer import summarize_page
+from agent.summarizer import summarize_page, compress_raw_text
 from agent.wiki_builder import store_article
 from agent.checkpoint import save_checkpoint, load_checkpoint, delete_checkpoint, check_soft_stop
 from tools.search import get_search_results
@@ -212,7 +212,8 @@ async def run_autonomous_loop(subject, collection_name, max_iterations=3, depth=
                     db.add_chunks(summary_chunks, url, chunk_type="summary")
                     
                     # Store the raw text to preserve specific granular details (Dual-Ingestion)
-                    raw_chunks = chunk_text(text)
+                    compressed_raw = compress_raw_text(text)
+                    raw_chunks = chunk_text(compressed_raw)
                     db.add_chunks(raw_chunks, url, chunk_type="raw")
                     
                     # === WIKI BUILDER: Save human-readable markdown to disk ===

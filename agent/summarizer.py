@@ -1,3 +1,4 @@
+import re
 from llm.client import LocalLLM
 from config.settings import LLM_CONTEXT_WINDOW
 
@@ -9,6 +10,25 @@ MAX_WORDS_PER_CALL = 3000
 # Safety ceiling: max words we'll ever feed to the LLM in a single call.
 # Estimated at ~0.75 words per token, with 80% of the context window as headroom.
 MAX_INPUT_WORDS = int(LLM_CONTEXT_WINDOW * 0.75 * 0.8)
+
+
+def compress_raw_text(text: str) -> str:
+    """Aggressively strips useless formatting and whitespace noise to compress raw text directly."""
+    if not text:
+        return ""
+        
+    # Replace multiple newlines with a single newline
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    # Replace weird tab structures with single spaces
+    text = re.sub(r'\t+', ' ', text)
+    # Strip sequential spaces into a single space
+    text = re.sub(r' {2,}', ' ', text)
+    
+    # Clean PDF-style hanging page numbers or massive footers (e.g., "\n  12  \n")
+    text = re.sub(r'\n\s*\d+\s*\n', '\n', text)
+    
+    # Return compressed text
+    return text.strip()
 
 
 async def summarize_page(raw_text: str, subject: str, url: str, log_func=None) -> str:

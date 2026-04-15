@@ -49,9 +49,13 @@ Discord (User Interface)
   - **Thorough** — 5 queries, 60 chunks, Max 3 auto-research loops (~40s+)
   - **Omniscient** — Uncapped gap-seeking. Dynamically spawns autonomous web agent loops to fill its own knowledge gaps indefinitely until the question is perfectly answered or `/finish` is triggered.
 - **Iterative Draft Refining** — By feeding the LLM its previous incomplete drafts alongside brand new gap-filling chunks, the agent inherently bypasses the context window limits, generating ever-growing multi-page documents!
+- **Dual-Ingestion Architecture** — Natively preserves massive compressed raw text blocks directly alongside the summarized chunks so granular letter-for-letter data is never lost.
 - **Native Translation** — Force reports into any language (Spanish, French, etc.) while automatically preserving mathematical symbology and proper nouns
 - **Context Budget Protection** — Automatically truncates assembled context to stay within the model's context window
 - **Structured Reports** — Outputs standardized Markdown with Executive Summary, Comprehensive Analysis, Citations, and Knowledge Gaps sections
+
+### 🛠️ Utilities
+- **Retroactive Backfill (`/backfill_raw`)** — A powerful admin command that iterates through your existing Markdown Wikipedia, extracts the original source URLs, re-scrapes them, applies extreme text-compression, and injects the formerly missing granular raw data seamlessly into ChromaDB to repair legacy RAG pools.
 - **Discord Integration** — Large reports are packaged as downloadable `.md` file attachments
 
 ### 📚 Knowledge Base
