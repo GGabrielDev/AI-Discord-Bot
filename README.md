@@ -78,6 +78,7 @@ python -m venv .
 ```bash
 ./bin/pip install -r requirements.txt
 ```
+*(Note: The requirements file explicitly forces `pip` to download the CPU-only versions of PyTorch to save ~5GB of useless CUDA binaries, perfectly aligning with our CPU-bound Marker extraction).*
 
 **4. Configure Environment Variables:**
 Create a `.env` file in the root directory:
