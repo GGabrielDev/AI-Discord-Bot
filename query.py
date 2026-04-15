@@ -2,6 +2,11 @@ import argparse
 import asyncio
 from storage.vectordb import VectorDB
 from llm.client import LocalLLM
+from config.settings import LLM_CONTEXT_WINDOW
+
+# Safety ceiling for context fed to the LLM during /ask synthesis.
+# Estimated at ~0.75 words per token, with 80% headroom for system prompt + generation.
+MAX_CONTEXT_WORDS = int(LLM_CONTEXT_WINDOW * 0.75 * 0.8)
 
 async def _expand_query(llm: LocalLLM, question: str, num_variations: int) -> list[str]:
     """Uses the LLM to generate semantic variations of the original question."""
@@ -88,6 +93,12 @@ async def answer_question(topic: str, question: str, mode: str = "Balanced", log
             context_parts.append(f"--- Raw Source Data (from: {source}) ---\n{doc}")
             
     context_text = "\n\n".join(context_parts)
+    
+    # Guard: truncate if the assembled context exceeds the model's budget
+    context_words = context_text.split()
+    if len(context_words) > MAX_CONTEXT_WORDS:
+        await log(f"⚠️ Context exceeds budget ({len(context_words):,} words). Truncating to {MAX_CONTEXT_WORDS:,} words to protect model stability.")
+        context_text = " ".join(context_words[:MAX_CONTEXT_WORDS]) + "\n\n[... context truncated for model budget]"
     
     # 4. Standardized Markdown Synthesis (Schema Enforcer)
     system_prompt = (
