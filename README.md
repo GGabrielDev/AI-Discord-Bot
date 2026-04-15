@@ -30,9 +30,9 @@ This means the agent **gets smarter with each iteration** — it doesn't just re
 ├── AI_Discord_Bot.py     # Legacy entry point: simple !prompt command
 ├── requirements.txt      # Python dependencies
 ├── config/
-│   └── settings.py       # Validates and loads .env variables
+│   └── settings.py       # Validates and loads .env variables (LLM, search, storage)
 ├── llm/
-│   └── client.py         # AsyncOpenAI wrapper for the local llama-server
+│   └── client.py         # Hardened LLM client: retries, timeouts, task temperatures
 ├── tools/
 │   ├── search.py         # SearXNG integration for web searching
 │   └── scraper.py        # HTTP scraper: visits URLs, extracts clean text
@@ -81,6 +81,10 @@ Create a `.env` file in the root directory:
 DISCORD_TOKEN=your_discord_bot_token_here
 LLM_API_BASE=http://localhost:8080/v1
 LLM_API_KEY=sk-no-key-required
+LLM_MODEL_NAME=local-model
+LLM_MAX_TOKENS=2048
+LLM_CONTEXT_WINDOW=131072
+LLM_TIMEOUT=120
 SEARXNG_URL=http://localhost:8081
 CHROMA_DB_PATH=./chroma_data
 ```

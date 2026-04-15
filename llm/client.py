@@ -1,55 +1,125 @@
 import json
 import re
+import asyncio
 from openai import AsyncOpenAI
-from config.settings import LLM_API_BASE, LLM_API_KEY
+from config.settings import LLM_API_BASE, LLM_API_KEY, LLM_MODEL_NAME, LLM_MAX_TOKENS, LLM_TIMEOUT
 
 class LocalLLM:
+    """Hardened LLM client optimized for local inference with Gemma 4 E4B.
+    
+    Features:
+    - Task-specific temperature presets
+    - Configurable max_tokens to prevent runaway generation
+    - Retry logic for JSON parsing failures
+    - Timeout handling for slow/overloaded servers
+    """
+    
     def __init__(self):
         self.client = AsyncOpenAI(
             base_url=LLM_API_BASE,
-            api_key=LLM_API_KEY
+            api_key=LLM_API_KEY,
+            timeout=LLM_TIMEOUT
         )
-        self.model = "local-model"
+        self.model = LLM_MODEL_NAME
+        self.default_max_tokens = LLM_MAX_TOKENS
 
-    async def generate_json(self, system_prompt: str, user_prompt: str) -> dict:
-        """Forces the local LLM to output a dictionary/JSON."""
-        try:
-            response = await self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
-                ],
-                temperature=0.2, # Low temperature for strict formatting
-            )
-            
-            content = response.choices[0].message.content
-            
-            # Local reasoning models often wrap JSON in markdown blocks or add extra text.
-            # This regex surgically extracts just the JSON object/array.
-            json_match = re.search(r'\{.*\}|\[.*\]', content, re.DOTALL)
-            if json_match:
-                clean_json = json_match.group(0)
-                return json.loads(clean_json)
-            else:
-                raise ValueError("No JSON found in response.")
+    async def generate_json(self, system_prompt: str, user_prompt: str, max_retries: int = 2) -> dict:
+        """Forces the local LLM to output a dictionary/JSON with retry logic.
+        
+        On first failure, retries with temperature=0.0 for maximum determinism.
+        """
+        temperature = 0.1  # Low temperature for strict formatting
+        
+        for attempt in range(max_retries):
+            try:
+                if attempt > 0:
+                    temperature = 0.0  # Force deterministic on retry
+                    print(f"[LLM] Retrying JSON generation (attempt {attempt + 1}/{max_retries}, temp=0.0)...")
                 
-        except Exception as e:
-            print(f"[LLM] Error generating JSON: {e}")
-            return {}
+                response = await asyncio.wait_for(
+                    self.client.chat.completions.create(
+                        model=self.model,
+                        messages=[
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": user_prompt}
+                        ],
+                        temperature=temperature,
+                        max_tokens=self.default_max_tokens
+                    ),
+                    timeout=LLM_TIMEOUT
+                )
+                
+                content = response.choices[0].message.content
+                
+                # Local reasoning models often wrap JSON in markdown blocks or add extra text.
+                # This regex surgically extracts just the JSON object/array.
+                json_match = re.search(r'\{.*\}|\[.*\]', content, re.DOTALL)
+                if json_match:
+                    clean_json = json_match.group(0)
+                    return json.loads(clean_json)
+                else:
+                    raise ValueError(f"No JSON found in response: {content[:200]}")
+                    
+            except asyncio.TimeoutError:
+                print(f"[LLM] Timeout after {LLM_TIMEOUT}s on attempt {attempt + 1}")
+                if attempt < max_retries - 1:
+                    continue
+                print("[LLM] All retries exhausted due to timeout.")
+                return {}
+            except json.JSONDecodeError as e:
+                print(f"[LLM] JSON parse error on attempt {attempt + 1}: {e}")
+                if attempt < max_retries - 1:
+                    continue
+                print("[LLM] All retries exhausted. Returning empty dict.")
+                return {}
+            except Exception as e:
+                print(f"[LLM] Error generating JSON: {e}")
+                return {}
 
-    async def generate_text(self, system_prompt: str, user_prompt: str, temperature: float = 0.7) -> str:
-        """Standard text generation for summaries."""
+    async def generate_text(self, system_prompt: str, user_prompt: str, temperature: float = 0.7, max_tokens: int = None) -> str:
+        """Standard text generation with configurable parameters.
+        
+        Args:
+            system_prompt: System-level instructions
+            user_prompt: User query/context
+            temperature: Controls randomness (0.0-1.0). Recommended:
+                - 0.1: JSON/structured output
+                - 0.3: Factual summarization
+                - 0.5: Analysis/evaluation
+                - 0.7: General conversation
+            max_tokens: Max output tokens. Defaults to LLM_MAX_TOKENS setting.
+        """
         try:
-            response = await self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
-                ],
-                temperature=temperature
+            response = await asyncio.wait_for(
+                self.client.chat.completions.create(
+                    model=self.model,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt}
+                    ],
+                    temperature=temperature,
+                    max_tokens=max_tokens or self.default_max_tokens
+                ),
+                timeout=LLM_TIMEOUT
             )
             return response.choices[0].message.content
+        except asyncio.TimeoutError:
+            print(f"[LLM] Timeout after {LLM_TIMEOUT}s during text generation.")
+            return ""
         except Exception as e:
             print(f"[LLM] Error generating text: {e}")
             return ""
+
+    async def generate_text_with_budget(self, system_prompt: str, user_prompt: str, 
+                                         max_input_words: int = 8000, **kwargs) -> str:
+        """Text generation with automatic input truncation.
+        
+        Useful when feeding large scraped content that might exceed context limits.
+        Truncates user_prompt to max_input_words to stay within budget.
+        """
+        words = user_prompt.split()
+        if len(words) > max_input_words:
+            print(f"[LLM] Truncating input from {len(words)} to {max_input_words} words")
+            user_prompt = " ".join(words[:max_input_words]) + "\n\n[... content truncated for context budget]"
+        
+        return await self.generate_text(system_prompt, user_prompt, **kwargs)
