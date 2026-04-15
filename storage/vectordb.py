@@ -1,17 +1,26 @@
 import chromadb
+import re
 from config.settings import CHROMA_DB_PATH
+
+import re # Add this at the top of the file
 
 class VectorDB:
     def __init__(self, collection_name="research_data"):
-        print(f"[VectorDB] Booting up storage at {CHROMA_DB_PATH}...")
+        # CLEAN THE NAME: 
+        # 1. Replace anything that isn't a letter, number, dot, or dash with an underscore
+        # 2. Ensure it doesn't start or end with a symbol
+        safe_name = re.sub(r'[^a-zA-Z0-9._-]', '_', collection_name).strip('_')
         
-        # Initialize the client with persistent storage so it survives reboots
+        # Ensure name is at least 3 chars
+        if len(safe_name) < 3:
+            safe_name = f"topic_{safe_name}" if len(safe_name) > 0 else "default_collection"
+
+        print(f"[VectorDB] Connecting to storage at {CHROMA_DB_PATH} using safe name: {safe_name}")
+        
         self.client = chromadb.PersistentClient(path=CHROMA_DB_PATH)
-        
-        # Get or create a collection (think of it like a table in SQL)
         self.collection = self.client.get_or_create_collection(
-            name=collection_name,
-            metadata={"hnsw:space": "cosine"} # Standard math for comparing text similarity
+            name=safe_name,
+            metadata={"hnsw:space": "cosine"}
         )
 
     def add_chunks(self, chunks: list[str], source_url: str):
@@ -46,11 +55,12 @@ class VectorDB:
         return []
 
     def delete_topic(self, collection_name: str):
-    try:
-        self.client.delete_collection(name=collection_name)
-        print(f"Collection '{collection_name}' deleted.")
-    except Exception as e:
-        print(f"Error deleting collection: {e}")
+        """Removes a specific collection from the database."""
+        try:
+            self.client.delete_collection(name=collection_name)
+            print(f"[VectorDB] Collection '{collection_name}' deleted.")
+        except Exception as e:
+            print(f"[VectorDB] Error deleting collection: {e}")
 
 # Quick manual test if you run this file directly
 if __name__ == "__main__":

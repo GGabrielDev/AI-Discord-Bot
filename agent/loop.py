@@ -27,7 +27,7 @@ async def evaluate_knowledge(topic: str, db: VectorDB, llm: LocalLLM) -> list[st
 
 async def run_autonomous_loop(topic: str, max_iterations: int = 5):
     print(f"\n🚀 STARTING OVERNIGHT RESEARCH: '{topic}'")
-    db = VectorDB()
+    db = VectorDB(collection_name=topic)
     llm = LocalLLM()
     seen_urls = set()
     
