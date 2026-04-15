@@ -42,9 +42,6 @@ async def topic_autocomplete(
 
 from agent.checkpoint import load_checkpoint, load_chain_checkpoint, save_chain_checkpoint, delete_chain_checkpoint, request_soft_stop
 from agent.planner import decompose_chain_prompt
-import os
-import re
-from agent.wiki_builder import WIKI_ROOT
 from agent.summarizer import compress_raw_text, chunk_text
 from tools.scraper import scrape_text_from_url
 from storage.vectordb import VectorDB
@@ -56,11 +53,11 @@ from storage.vectordb import VectorDB
     subject="What do you want to learn about?",
     iterations="Thoroughness: How many cycles of analysis? (1-10)",
     depth="Depth: How many sites to scrape per query? (1-5)",
-    save_to="Optional: Existing collection to save into. (Leave empty to use subject name)"
+    topic="Optional: Existing collection to save into. (Leave empty to use subject name)"
 )
-@app_commands.autocomplete(save_to=topic_autocomplete) # Use the same autocomplete we built!
-async def research(interaction: discord.Interaction, subject: str, iterations: int = 3, depth: int = 2, save_to: str = None):
-    collection = save_to if save_to else subject
+@app_commands.autocomplete(topic=topic_autocomplete) # Use the same autocomplete we built!
+async def research(interaction: discord.Interaction, subject: str, iterations: int = 3, depth: int = 2, topic: str = None):
+    topic_val = topic if topic else subject
     
     # Check for an interrupted session and notify the user
     checkpoint = load_checkpoint(subject)
@@ -99,17 +96,17 @@ async def research(interaction: discord.Interaction, subject: str, iterations: i
         # We pass our logger into the loop
         count = await run_autonomous_loop(
             subject=subject, 
-            collection_name=collection, 
+            topic=topic_val, 
             max_iterations=iterations, 
             depth=depth, 
             log_func=discord_logger # THE BRIDGE
         )
         
         try:
-            await interaction.followup.send(f"🏁 **Mission Complete.** {count} sources archived in `{collection}`.")
+            await interaction.followup.send(f"🏁 **Mission Complete.** {count} sources archived in `{topic_val}`.")
         except discord.errors.HTTPException:
             # The interaction token expired (15 minute limit for long researches)
-            await interaction.channel.send(f"<@{interaction.user.id}> 🏁 **Mission Complete.** {count} sources archived in `{collection}`.")
+            await interaction.channel.send(f"<@{interaction.user.id}> 🏁 **Mission Complete.** {count} sources archived in `{topic_val}`.")
             
     except Exception as e:
         await interaction.channel.send(f"🚨 **CRITICAL SYSTEM ERROR:** ```{e}```")
@@ -124,29 +121,53 @@ async def finish(interaction: discord.Interaction):
 async def backfill_raw(interaction: discord.Interaction, topic: str):
     await interaction.response.send_message(f"⚙️ **Backfill Initiated for `{topic}`.** Analyzing existing markdown index...")
     
-    topic_dir = os.path.join(WIKI_ROOT, topic.replace(" ", "_").lower())
-    if not os.path.exists(topic_dir):
-        await interaction.channel.send(f"❌ Error: Topic `{topic}` not found in knowledge base.")
-        return
-        
-    urls_to_scrape = set()
+    master_topic_dir = os.path.join(WIKI_ROOT, topic.replace(" ", "_").lower())
+    os.makedirs(master_topic_dir, exist_ok=True)
     
-    for filename in os.listdir(topic_dir):
-        if not filename.endswith(".md"):
+    urls_to_scrape = set()
+    files_moved = 0
+    dirs_to_clean = set()
+    
+    # 1. Global sweep to extract URLs and structurally migrate files
+    for root, dirs, files in os.walk(WIKI_ROOT):
+        # Don't iterate over the target master directory itself to avoid recursive chaos
+        if root.startswith(master_topic_dir):
             continue
             
-        filepath = os.path.join(topic_dir, filename)
-        with open(filepath, "r", encoding="utf-8") as f:
-            content = f.read()
-            match = re.search(r'\*\*Source URL:\*\* \[(.*?)\]', content)
-            if match:
-                urls_to_scrape.add(match.group(1))
+        for filename in files:
+            if not filename.endswith(".md") or filename == "index.md":
+                continue
                 
+            filepath = os.path.join(root, filename)
+            with open(filepath, "r", encoding="utf-8") as f:
+                content = f.read()
+                match = re.search(r'\*\*Source URL:\*\* \[(.*?)\]', content)
+                if match:
+                    urls_to_scrape.add(match.group(1))
+            
+            # Physically migrate the file to the master directory
+            new_filepath = os.path.join(master_topic_dir, filename)
+            shutil.move(filepath, new_filepath)
+            files_moved += 1
+            dirs_to_clean.add(root)
+            
+    # Clean up empty prompt directories
+    for empty_dir in dirs_to_clean:
+        try:
+            if not os.listdir(empty_dir): # Only delete if actually empty
+                os.rmdir(empty_dir)
+        except OSError:
+            pass
+            
+    # Re-generate index since we broke the old paths
+    if files_moved > 0:
+        generate_index_page()
+            
     if not urls_to_scrape:
-        await interaction.channel.send("⚠️ No URLs found in the markdown files.")
+        await interaction.channel.send("⚠️ No newly un-vacuumed URLs found in the overarching markdown index.")
         return
         
-    await interaction.channel.send(f"🔍 Found {len(urls_to_scrape)} unique URLs. Scraping & compressing raw data...")
+    await interaction.channel.send(f"🧹 Vacuumed **{files_moved}** `.md` files into `knowledge_base/{topic}/`.\n🔍 Found **{len(urls_to_scrape)}** unique overarching URLs. Igniting deep RAW compression backfill...")
     db = VectorDB(collection_name=topic)
     
     success = 0
@@ -168,43 +189,40 @@ async def backfill_raw(interaction: discord.Interaction, topic: str):
 @bot.tree.command(name="chain_research", description="Decompose a massive prompt into multiple sub-topics and research them in an automated chain.")
 @app_commands.describe(
     prompt="What is your massive, overarching research goal?",
-    save_to="REQUIRED: Collection to pool all vectorized knowledge into.",
-    iterations="Thoroughness per sub-topic? (1-10)",
-    depth="Depth: How many sites to scrape per query? (1-5)"
+    topic="The unified database topic to intelligently pool all the sub-topic findings into",
+    max_depth="Max depth of sub-research (Recommended: 3-5)"
 )
-@app_commands.autocomplete(save_to=topic_autocomplete)
-async def chain_research(interaction: discord.Interaction, prompt: str, save_to: str, iterations: int = 10, depth: int = 5):
-    # Check for macro chain checkpoint
-    chain_state = load_chain_checkpoint(prompt)
+@app_commands.autocomplete(topic=topic_autocomplete)
+async def chain_research(interaction: discord.Interaction, prompt: str, topic: str, max_depth: int = 4):
+    await interaction.response.send_message(f"⛓️ **Analyzing Master Prompt:** `{prompt}`\n> Decomposing into exhaustive sub-topics...")
+    sub_topics = await decompose_chain_prompt(prompt)
     
-    if chain_state and chain_state.get("status") == "in_progress":
-        sub_topics = chain_state["sub_topics"]
-        start_index = chain_state["current_topic_index"]
-        await interaction.response.send_message(
-            f"⛓️ **Resuming Master Chain:** `{prompt[:50]}...`\n"
-            f"> Detected interrupted chain. Resuming at sub-topic {start_index+1}/{len(sub_topics)}."
-        )
+    # Announce the formulated plan
+    plan_msg = "### 📋 Chain Research Plan\n"
+    for i, t in enumerate(sub_topics, 1):
+        plan_msg += f"{i}. {t}\n"
+    await interaction.channel.send(plan_msg)
+        
+    # We check if a chain checkpoint exists.
+    checkpoint = load_chain_checkpoint(prompt, topic)
+    if checkpoint:
+        start_idx = checkpoint["current_index"]
+        queries = checkpoint["queries"]
+        sub_topic = queries[start_idx]
+        await interaction.channel.send(f"⚠️ Resuming exactly from interrupted chain: {topic} - `{sub_topic}`")
     else:
-        await interaction.response.send_message(f"⛓️ **Analyzing Master Prompt:** `{prompt}`\n> Decomposing into exhaustive sub-topics...")
-        sub_topics = await decompose_chain_prompt(prompt)
-        start_index = 0
+        # Save a new checkpoint so if we crash during decomposition, we can't resume, we just start over
+        save_chain_checkpoint(prompt, topic, sub_topics)
+        start_idx = 0
+        queries = sub_topics
         
-        # Announce the formulated plan
-        plan_msg = "### 📋 Chain Research Plan\n"
-        for i, t in enumerate(sub_topics, 1):
-            plan_msg += f"{i}. {t}\n"
-        await interaction.channel.send(plan_msg)
-        
-        # Save initial state
-        save_chain_checkpoint(prompt, save_to, iterations, depth, sub_topics, start_index)
-        
-    for i in range(start_index, len(sub_topics)):
-        current_topic = sub_topics[i]
+    for i in range(start_idx, len(queries)):
+        sub_topic = queries[i]
         
         # Save progress at the start of each topic
-        save_chain_checkpoint(prompt, save_to, iterations, depth, sub_topics, i)
+        save_chain_checkpoint(prompt, topic, queries, i)
         
-        await interaction.channel.send(f"\n🚀 **Chain Progress {i+1}/{len(sub_topics)} — Starting sub-chain:** `{current_topic}`")
+        await interaction.channel.send(f"\n🚀 **Chain Progress {i+1}/{len(queries)} — Starting sub-chain:** `{sub_topic}`")
         
         status_message = None
         async def chain_logger(message, is_sub_step=False):
@@ -223,19 +241,19 @@ async def chain_research(interaction: discord.Interaction, prompt: str, save_to:
                 
         try:
             await run_autonomous_loop(
-                subject=current_topic,
-                collection_name=save_to,
-                max_iterations=iterations,
-                depth=depth,
+                subject=sub_topic,
+                topic=topic,
+                max_iterations=1, # One deep loop per sub-topic
+                depth=max_depth,
                 log_func=chain_logger
             )
         except Exception as e:
-            await interaction.channel.send(f"🚨 **CHAIN FAILED on `{current_topic}`:** ```{e}```")
+            await interaction.channel.send(f"🚨 **CHAIN FAILED on `{sub_topic}`:** ```{e}```")
             return # Stop the chain if a sub-loop critically fails
             
     # Chain complete
     delete_chain_checkpoint(prompt)
-    await interaction.channel.send(f"🏁 **ALL CHAINS COMPLETE.** Pool `{save_to}` is rich with knowledge!")
+    await interaction.channel.send(f"🏁 **ALL CHAINS COMPLETE.** Pool `{topic}` is rich with knowledge!")
 
 @bot.tree.command(name="ask", description="Query your research database for answers.")
 @app_commands.describe(

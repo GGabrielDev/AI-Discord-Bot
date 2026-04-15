@@ -47,7 +47,7 @@ def _checkpoint_path(topic: str) -> str:
 
 def save_checkpoint(
     subject: str,
-    collection_name: str,
+    topic: str,
     max_iterations: int,
     depth: int,
     current_iteration: int,
@@ -64,7 +64,7 @@ def save_checkpoint(
     
     Args:
         subject: The original research topic
-        collection_name: ChromaDB collection name
+        topic: The knowledge base topic to pool results into
         max_iterations: Total planned iterations
         depth: URLs per query
         current_iteration: Which iteration we're currently in (1-indexed)
@@ -78,7 +78,7 @@ def save_checkpoint(
     
     state = {
         "subject": subject,
-        "collection_name": collection_name,
+        "topic": topic,
         "max_iterations": max_iterations,
         "depth": depth,
         "current_iteration": current_iteration,

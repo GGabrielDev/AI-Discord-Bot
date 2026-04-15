@@ -109,7 +109,7 @@ def content_hash(text: str) -> str:
     return hashlib.md5(text[:1000].encode()).hexdigest()
 
 
-async def run_autonomous_loop(subject, collection_name, max_iterations=3, depth=3, log_func=None):
+async def run_autonomous_loop(subject, topic, max_iterations=3, depth=3, log_func=None):
     """Executes the autonomous research pipeline with checkpoint-based crash resilience.
     
     On startup, checks for an existing checkpoint file. If one exists, the loop
@@ -125,7 +125,7 @@ async def run_autonomous_loop(subject, collection_name, max_iterations=3, depth=
         if log_func:
             await log_func(msg, is_sub_step)
 
-    db = VectorDB(collection_name=collection_name)
+    db = VectorDB(collection_name=topic)
     llm = LocalLLM()
     
     # --- Checkpoint Recovery ---
@@ -157,7 +157,7 @@ async def run_autonomous_loop(subject, collection_name, max_iterations=3, depth=
         
         # Save initial checkpoint
         save_checkpoint(
-            subject=subject, collection_name=collection_name,
+            subject=subject, topic=topic,
             max_iterations=max_iterations, depth=depth,
             current_iteration=1, current_query_index=0,
             current_queries=current_queries,
@@ -217,7 +217,7 @@ async def run_autonomous_loop(subject, collection_name, max_iterations=3, depth=
                     db.add_chunks(raw_chunks, url, chunk_type="raw")
                     
                     # === WIKI BUILDER: Save human-readable markdown to disk ===
-                    store_article(subject, url, summary)
+                    store_article(topic, url, summary)
                     
                     seen_urls.add(url)
                     seen_hashes.add(text_hash)
@@ -225,7 +225,7 @@ async def run_autonomous_loop(subject, collection_name, max_iterations=3, depth=
                     
                     # === CHECKPOINT: Save state after each successfully processed URL ===
                     save_checkpoint(
-                        subject=subject, collection_name=collection_name,
+                        subject=subject, topic=topic,
                         max_iterations=max_iterations, depth=depth,
                         current_iteration=iteration, current_query_index=q_idx,
                         current_queries=current_queries,
