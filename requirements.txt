@@ -1,0 +1,13 @@
+# --- Discord & Bot Interface ---
+discord.py
+python-dotenv
+
+# --- Vector Database & Embeddings ---
+chromadb
+
+# --- Scraping & HTTP Clients ---
+httpx
+beautifulsoup4
+
+# --- AI & LLM Integration ---
+openai>=1.0.0

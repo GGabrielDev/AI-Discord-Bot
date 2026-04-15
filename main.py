@@ -41,20 +41,36 @@ async def topic_autocomplete(
 
 # --- Slash Commands ---
 
-@bot.tree.command(name="research", description="Start an autonomous research loop on a topic.")
+@bot.tree.command(name="research", description="Start an autonomous research run.")
 @app_commands.describe(
-    topic="The name of the research project (slug).",
-    iterations="How many search/analyze cycles to run (Default: 3)."
+    subject="What do you want to learn about?",
+    iterations="Thoroughness: How many cycles of analysis? (1-10)",
+    depth="Depth: How many sites to scrape per query? (1-5)",
+    save_to="Optional: Existing collection to save into. (Leave empty to use subject name)"
 )
-async def research(interaction: discord.Interaction, topic: str, iterations: int = 3):
-    await interaction.response.send_message(f"🚀 **Initializing Research Agent** for: `{topic}`\n*This will take a few minutes...*")
+@app_commands.autocomplete(save_to=topic_autocomplete) # Use the same autocomplete we built!
+async def research(interaction: discord.Interaction, subject: str, iterations: int = 3, depth: int = 2, save_to: str = None):
+    collection = save_to if save_to else subject
+    await interaction.response.send_message(f"🏗️ **Building Research Environment for `{subject}`...**")
     
-    # Run the research in the background so the bot doesn't hang
+    # This is the "Bridge" function
+    async def discord_logger(message):
+        # We use the interaction channel to send live updates
+        await interaction.channel.send(f"> {message}")
+
     try:
-        await run_autonomous_loop(topic, max_iterations=iterations)
-        await interaction.followup.send(f"✅ **Research Complete!** Data stored in collection: `{topic}`")
+        # We pass our logger into the loop
+        count = await run_autonomous_loop(
+            subject=subject, 
+            collection_name=collection, 
+            max_iterations=iterations, 
+            depth=depth, 
+            log_func=discord_logger # THE BRIDGE
+        )
+        
+        await interaction.followup.send(f"🏁 **Mission Complete.** {count} sources archived in `{collection}`.")
     except Exception as e:
-        await interaction.followup.send(f"❌ **Research Failed:** {e}")
+        await interaction.channel.send(f"🚨 **CRITICAL SYSTEM ERROR:** ```{e}```")
 
 @bot.tree.command(name="ask", description="Query your research database for answers.")
 @app_commands.describe(
