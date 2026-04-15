@@ -1,86 +1,98 @@
-# Autonomous Research Agent
+# 🧠 AI Discord Research Agent
 
-An offline-first, LLM-driven research assistant designed to run unattended. It takes a seed topic, generates search queries, scrapes web content, and compiles the findings into a local vector database for later retrieval (RAG).
+> An autonomous research agent that lives inside your Discord server. Give it a topic — it searches the web, scrapes pages, parses PDFs, summarizes everything through a local LLM, and builds a structured knowledge base you can query with natural language.
 
-## Core Stack
-* **LLM Backend:** `llama.cpp` / `llama-server` (Local) — optimized for `unsloth/gemma-4-E4B-it-GGUF:UD-Q8_K_XL`
-* **Agent Logic:** Python (via `venv`)
-* **Search:** `SearXNG` (local meta-search engine)
-* **Storage:** `chromadb` (Local Vector Database)
+## Architecture Overview
 
-## How It Works
-
-The agent runs an **iterative deepening loop**:
-
-1. **Plan** — The LLM generates targeted search queries for the topic
-2. **Harvest** — SearXNG finds URLs, the scraper extracts clean text
-3. **Analyze** — The LLM reads each scraped page and produces a structured summary extracting key facts, data points, and relationships
-4. **Store** — Analyzed summaries are chunked and saved to ChromaDB with source metadata
-5. **Evaluate** — The LLM reviews what's been collected, identifies knowledge gaps, and generates NEW queries targeting the missing information
-6. **Repeat** — Steps 2-5 repeat for the configured number of iterations, with queries evolving each cycle
-
-This means the agent **gets smarter with each iteration** — it doesn't just repeat the same searches.
-
-## Directory Architecture
-
-```text
-.
-├── .env                  # API keys, DB paths, Search URLs (Ignored in Git)
-├── main.py               # Entry point: Discord bot with slash commands
-├── AI_Discord_Bot.py     # Legacy entry point: simple !prompt command
-├── requirements.txt      # Python dependencies
-├── config/
-│   └── settings.py       # Validates and loads .env variables (LLM, search, storage)
-├── llm/
-│   └── client.py         # Hardened LLM client: retries, timeouts, task temperatures
-├── tools/
-│   ├── search.py         # SearXNG integration for web searching
-│   ├── scraper.py        # Streaming HTTP scraper: limits size, streams PDFs
-│   └── pdf_parser.py     # Native PDF extraction via CPU-bound Marker
-├── storage/
-│   └── vectordb.py       # ChromaDB: chunking, embeddings, search, stats
-├── agent/
-│   ├── planner.py        # Generates search queries + evaluates knowledge gaps
-│   ├── summarizer.py     # LLM-powered text analysis and fact extraction
-│   ├── loop.py           # The autonomous research orchestration loop
-│   └── wiki_builder.py   # Synthesizes `.md` files to the knowledge_base folder
-└── query.py              # RAG query interface (Multi-Query /ask mode matrix)
+```
+Discord (User Interface)
+  ├── /research  →  Autonomous Research Loop
+  │     ├── SearXNG (Private Search)
+  │     ├── Async Scraper (HTML + PDF)
+  │     │     └── Marker PDF Engine (Deep Learning OCR)
+  │     ├── LLM Summarizer (Gemma 4 via llama-server)
+  │     ├── ChromaDB (Vector Embeddings)
+  │     ├── Wiki Builder (Markdown Knowledge Base)
+  │     └── Checkpoint System (Crash Resilience)
+  │
+  └── /ask  →  Multi-Query RAG Pipeline
+        ├── Semantic Query Expansion
+        ├── Vector Similarity Search
+        ├── Context Budget Manager
+        └── Structured Markdown Reports
 ```
 
-## Capabilities
-1. **Iterative Deep Research** — Multi-pass search with LLM-driven query evolution
-2. **Knowledge Gap Analysis** — After each iteration, the LLM evaluates collected data and identifies what's missing
-3. **LLM-Powered Summarization** — Every scraped page is read and analyzed by the LLM before storage
-4. **Semantic Chunking** — Text is split at paragraph/sentence boundaries with overlap, not arbitrary word counts
-5. **Content Deduplication** — URL-level and content-hash-level duplicate detection
-6. **Smart RAG Retrieval** — Prioritizes analyzed summaries over raw text, cross-references sources
-7. **Source Provenance** — Every chunk tracks its origin URL, type, and timestamp
-8. **Robust Web Scraping** — Streams content to enforce strict 150MB limits and verifies `Content-Type` immediately, preventing the agent from stalling on ISO files or slow connections.
-9. **Native PDF Parsing** — Extracts extremely accurate Markdown from research papers using `marker`.
-10. **Markdown Wikipedia** — Automatically generates a readable, locally browsable `knowledge_base/` linking all summarized articles by topic.
-11. **High-Recall Multi-Query RAG** — The `/ask` command supports *Fast, Balanced, and Thorough* modes, generating semantic variations of queries to recall up to 60+ chunks perfectly. Answers are formatted via a strict schema and attached as downloadable `.md` files to bypass Discord limits.
-12. **Collection Management** — Autocomplete for existing research topics in Discord
+## Features
 
-## Setup & Installation
+### 🔬 Autonomous Research (`/research`)
+- **Iterative Deep Dive** — Runs multiple cycles of search → scrape → summarize → evaluate → replan
+- **Gap Analysis** — After each iteration, the LLM reviews what it's learned and identifies missing information
+- **PDF Intelligence** — Deep learning vision models (Surya OCR) parse complex PDFs including tables, equations, and multi-column layouts with high accuracy
+- **Content Deduplication** — MD5 content hashing prevents the same information from being stored twice
+- **Crash Resilience** — JSON checkpoint system saves loop state after every URL, enabling seamless resume after blackouts or crashes
+
+### 🧠 Knowledge Query (`/ask`)
+- **Multi-Query Retrieval** — Generates semantic variations of your question to maximize recall across the vector database
+- **Three Performance Modes:**
+  - **Fast** — Single query, 10 chunks, ~5 seconds
+  - **Balanced** — 3 queries, ~30 chunks, ~15 seconds
+  - **Thorough** — 5 queries, ~60 chunks, ~40 seconds
+- **Context Budget Protection** — Automatically truncates assembled context to stay within the model's context window
+- **Structured Reports** — Outputs standardized Markdown with Executive Summary, Comprehensive Analysis, Citations, and Knowledge Gaps sections
+- **Discord Integration** — Large reports are packaged as downloadable `.md` file attachments
+
+### 📚 Knowledge Base
+- **Dual Storage** — ChromaDB for semantic vector search + human-readable Markdown files on disk
+- **Auto-Generated Index** — Master `index.md` with links to all research articles, organized by topic
+- **Full Provenance** — Every chunk tracks its source URL, timestamp, and processing metadata
+
+### ⚡ Checkpoint System (Crash Resilience)
+When a research session is interrupted (power outage, network failure, OOM crash), the bot automatically resumes from exactly where it left off:
+- Loop position (iteration number, query index) is saved after every significant action
+- All visited URLs and content hashes are preserved
+- The LLM's replanned queries survive the restart
+- Users see a clear Discord notification: *"⚡ Resuming interrupted research..."*
+- On successful completion, the checkpoint is automatically cleaned up
+
+### 🛡️ Hardware-Aware Optimizations
+Designed for constrained hardware (tested on AMD BC-250 with 14.75GB unified memory):
+- **Marker Model Caching** — Deep learning OCR models load once and persist for the entire bot session (~1.3GB, 30s initial load, instant reuse)
+- **CPU-Only PDF Processing** — Forces PyTorch to CPU to prevent OOM conflicts with llama-server's GPU memory allocation
+- **Context Budget Enforcement** — All LLM calls enforce word-count ceilings to prevent context window overflow
+- **Fully Async Pipeline** — Scraper, search, and PDF parsing all run without blocking the Discord event loop
+- **Token Usage Tracking** — Every LLM call logs prompt/completion token counts with running session totals
+
+---
+
+## Installation
+
+### Prerequisites
+- Python 3.12+
+- A running [SearXNG](https://docs.searxng.org/) instance for private web search
+- A running [llama-server](https://github.com/ggerganov/llama.cpp) with an OpenAI-compatible API (see [docs/llama_server.md](docs/llama_server.md))
+
+### Setup
 
 **1. Clone the repository:**
 ```bash
-git clone <your-repo-url>
+git clone https://github.com/GGabrielDev/AI-Discord-Bot.git
 cd AI-Discord-Bot
 ```
 
-**2. Initialize the virtual environment:**
+**2. Create a Python virtual environment:**
 ```bash
 python -m venv .
+source bin/activate
 ```
 
 **3. Install dependencies:**
 ```bash
-./bin/pip install -r requirements.txt
+CFLAGS="-Wno-incompatible-pointer-types" pip install -r requirements.txt
 ```
-*(Note: The requirements file explicitly forces `pip` to download the CPU-only versions of PyTorch to save ~5GB of useless CUDA binaries, perfectly aligning with our CPU-bound Marker extraction).*
+> **Note:** The `CFLAGS` prefix is required on systems with GCC 15+ (e.g., CachyOS, Arch) to bypass strict pointer-type warnings in Pillow's C extensions. The requirements file also forces CPU-only PyTorch to save ~5GB of unnecessary CUDA binaries.
 
-**4. Configure Environment Variables:**
+**4. Configure environment variables:**
+
 Create a `.env` file in the root directory:
 ```env
 DISCORD_TOKEN=your_discord_bot_token_here
@@ -103,23 +115,97 @@ llama-server \
   --host 0.0.0.0 --port 8080
 ```
 
-> See [docs/llama_server.md](docs/llama_server.md) for a full configuration guide including RotorQuant KV cache compression, context sizing, and troubleshooting.
+> See [docs/llama_server.md](docs/llama_server.md) for a full configuration guide including KV cache compression, context sizing, and troubleshooting.
 
 **6. Run the bot:**
 ```bash
 python main.py
 ```
 
-**Note on Version Control:** The `bin/`, `lib/`, `chroma_data/`, and `__pycache__/` directories are excluded via `.gitignore`.
+**7. Sync slash commands (first run only):**
+
+Send `!sync` in your Discord server to register the `/research` and `/ask` slash commands.
+
+---
+
+## Usage
+
+### Starting a Research Session
+```
+/research subject:"solid state batteries" iterations:5 depth:3
+```
+The bot will autonomously:
+1. Generate targeted search queries via the LLM
+2. Search the web through SearXNG
+3. Scrape and parse each result (HTML pages and PDFs)
+4. Summarize findings through the LLM
+5. Store analyzed chunks in ChromaDB
+6. Write human-readable Markdown to `knowledge_base/`
+7. Evaluate knowledge gaps and generate new queries for the next iteration
+8. Save checkpoint state after every processed URL
+
+### Querying Your Knowledge Base
+```
+/ask topic:"solid state batteries" question:"What are the main electrolyte materials?" mode:Thorough
+```
+The bot will:
+1. Generate semantic variations of your question
+2. Run parallel vector searches across ChromaDB
+3. Deduplicate and prioritize results
+4. Synthesize a comprehensive Markdown report
+5. Deliver it as a downloadable `.md` file attachment
+
+---
 
 ## Maintenance
 
 ### Resetting the AI Brain
-If you want to intentionally wipe the bot's memory and make it forget all prior research, you must delete both its vector embeddings space and its human-readable Markdown directory.
-
-Run this in your terminal:
+To fully wipe the bot's memory and start fresh, delete all three data directories:
 ```bash
 rm -rf chroma_data/
 rm -rf knowledge_base/
+rm -rf checkpoints/
 ```
-The bot will automatically generate completely fresh, blank directories the next time you drop a link or PDF into the Discord chat!
+The bot will automatically generate fresh, blank directories the next time you run a command.
+
+### Clearing a Stuck Checkpoint
+If a checkpoint file prevents a fresh start on a specific topic:
+```bash
+rm -rf checkpoints/
+```
+This only removes session state — your ChromaDB data and knowledge base files remain intact.
+
+---
+
+## Project Structure
+
+```
+AI-Discord-Bot/
+├── main.py                  # Discord bot entry point, slash commands
+├── query.py                 # Multi-query RAG pipeline (/ask)
+├── requirements.txt         # Python dependencies
+├── agent/
+│   ├── loop.py              # Autonomous research loop (core brain)
+│   ├── planner.py           # Search query generation & gap analysis
+│   ├── summarizer.py        # LLM-powered content summarization
+│   ├── wiki_builder.py      # Markdown knowledge base generator
+│   └── checkpoint.py        # Crash-resilient state persistence
+├── llm/
+│   └── client.py            # Hardened LLM client with retries & token tracking
+├── tools/
+│   ├── scraper.py           # Async HTML/PDF streaming scraper
+│   ├── search.py            # Async SearXNG search integration
+│   └── pdf_parser.py        # Marker PDF-to-Markdown engine (cached models)
+├── storage/
+│   └── vectordb.py          # ChromaDB wrapper with rich metadata
+├── config/
+│   └── settings.py          # Environment variable loader
+├── docs/
+│   └── llama_server.md      # llama-server configuration guide
+│
+├── chroma_data/             # (generated) Vector embeddings
+├── knowledge_base/          # (generated) Human-readable Markdown wiki
+└── checkpoints/             # (generated) Research session state files
+```
+
+**Note on Version Control:** The `bin/`, `lib/`, `chroma_data/`, `knowledge_base/`, `checkpoints/`, and `__pycache__/` directories are excluded via `.gitignore`.
