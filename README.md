@@ -48,11 +48,14 @@ This means the agent **gets smarter with each iteration** — it doesn't just re
 ## Capabilities
 1. **Iterative Deep Research** — Multi-pass search with LLM-driven query evolution
 2. **Knowledge Gap Analysis** — After each iteration, the LLM evaluates collected data and identifies what's missing
-3. **Content Deduplication** — URL-level and content-hash-level duplicate detection
-4. **Web Scraping** — Robust HTML-to-text extraction with ad/boilerplate stripping
-5. **RAG Query** — Ask questions against your local research database
-6. **Discord Integration** — `/research` and `/ask` slash commands with live progress updates
-7. **Collection Management** — Autocomplete for existing research topics in Discord
+3. **LLM-Powered Summarization** — Every scraped page is read and analyzed by the LLM before storage
+4. **Semantic Chunking** — Text is split at paragraph/sentence boundaries with overlap, not arbitrary word counts
+5. **Content Deduplication** — URL-level and content-hash-level duplicate detection
+6. **Smart RAG Retrieval** — Prioritizes analyzed summaries over raw text, cross-references sources
+7. **Source Provenance** — Every chunk tracks its origin URL, type, and timestamp
+8. **Web Scraping** — Robust HTML-to-text extraction with ad/boilerplate stripping
+9. **Discord Integration** — `/research` and `/ask` slash commands with live progress updates
+10. **Collection Management** — Autocomplete for existing research topics in Discord
 
 ## Setup & Installation
 
