@@ -127,7 +127,7 @@ async def answer_question(topic: str, question: str, mode: str = "Balanced", log
         f"USER QUESTION: {question}"
     )
 
-    answer = await llm.generate_text(system_prompt, user_prompt, temperature=0.3) # 0.3 for high analytical precision
+    answer = await llm.generate_text(system_prompt, user_prompt, temperature=0.3, timeout_override=600) # 0.3 for high analytical precision, 600s because context is massive
     
     return answer
 

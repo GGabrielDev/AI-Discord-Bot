@@ -94,7 +94,7 @@ class LocalLLM:
                 print(f"[LLM] Error generating JSON: {e}")
                 return {}
 
-    async def generate_text(self, system_prompt: str, user_prompt: str, temperature: float = 0.7, max_tokens: int = None) -> str:
+    async def generate_text(self, system_prompt: str, user_prompt: str, temperature: float = 0.7, max_tokens: int = None, timeout_override: int = None) -> str:
         """Standard text generation with configurable parameters.
         
         Args:
@@ -106,8 +106,10 @@ class LocalLLM:
                 - 0.5: Analysis/evaluation
                 - 0.7: General conversation
             max_tokens: Max output tokens. Defaults to LLM_MAX_TOKENS setting.
+            timeout_override: Override the default global LLM_TIMEOUT in seconds.
         """
         try:
+            timeout_val = timeout_override or LLM_TIMEOUT
             response = await asyncio.wait_for(
                 self.client.chat.completions.create(
                     model=self.model,
@@ -118,12 +120,12 @@ class LocalLLM:
                     temperature=temperature,
                     max_tokens=max_tokens or self.default_max_tokens
                 ),
-                timeout=LLM_TIMEOUT
+                timeout=timeout_val
             )
             self._log_usage(response, "Text ")
             return response.choices[0].message.content
         except asyncio.TimeoutError:
-            print(f"[LLM] Timeout after {LLM_TIMEOUT}s during text generation.")
+            print(f"[LLM] Timeout after {timeout_val}s during text generation.")
             return ""
         except Exception as e:
             print(f"[LLM] Error generating text: {e}")
