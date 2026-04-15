@@ -13,7 +13,9 @@ Discord (User Interface)
   │     ├── LLM Summarizer (Gemma 4 via llama-server)
   │     ├── ChromaDB (Vector Embeddings)
   │     ├── Wiki Builder (Markdown Knowledge Base)
-  │     └── Checkpoint System (Crash Resilience)
+  │     ├── Checkpoint System (Crash Resilience)
+  │     ├── Live Dashboard Reporting
+  │     └── /chain_research → Macro-Prompt Decomposition
   │
   └── /ask  →  Multi-Query RAG Pipeline
         ├── Semantic Query Expansion
@@ -30,6 +32,13 @@ Discord (User Interface)
 - **PDF Intelligence** — Deep learning vision models (Surya OCR) parse complex PDFs including tables, equations, and multi-column layouts with high accuracy
 - **Content Deduplication** — MD5 content hashing prevents the same information from being stored twice
 - **Crash Resilience** — JSON checkpoint system saves loop state after every URL, enabling seamless resume after blackouts or crashes
+- **Live Discord Dashboard** — Deep technical logs (PDF stats, memory chunks, parsing metrics) are streamed natively into Discord via dynamic message editing, completely mimicking the backend console without spamming channels
+
+### 🔗 Chain Research (`/chain_research`)
+- **Macro Decomposition** — Feed the bot a massive, unbounded prompt and the LLM will exhaustively slice it into non-redundant, highly focused sub-topics
+- **Sequential Agent Looping** — Automatically deploys the autonomous `/research` loop iterativley across every sub-topic seamlessly
+- **Macro Resilience** — Chain-level checkpoints securely save progress between sub-topics; a server crash during topic 4 means the agent instantly resumes at topic 4 upon reboot
+- **Knowledge Pooling** — Vector data from all chain branches are centralized into a single unified `save_to` database
 
 ### 🧠 Knowledge Query (`/ask`)
 - **Multi-Query Retrieval** — Generates semantic variations of your question to maximize recall across the vector database
@@ -53,6 +62,8 @@ When a research session is interrupted (power outage, network failure, OOM crash
 - The LLM's replanned queries survive the restart
 - Users see a clear Discord notification: *"⚡ Resuming interrupted research..."*
 - On successful completion, the checkpoint is automatically cleaned up
+- **Chain Checkpoints** — For `/chain_research`, the bot securely hashes the `prompt` to remember which sub-topics have been fully researched
+
 
 ### 🛡️ Hardware-Aware Optimizations
 Designed for constrained hardware (tested on AMD BC-250 with 14.75GB unified memory):
