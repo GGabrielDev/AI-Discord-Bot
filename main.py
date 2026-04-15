@@ -99,7 +99,12 @@ async def research(interaction: discord.Interaction, subject: str, iterations: i
             log_func=discord_logger # THE BRIDGE
         )
         
-        await interaction.followup.send(f"🏁 **Mission Complete.** {count} sources archived in `{collection}`.")
+        try:
+            await interaction.followup.send(f"🏁 **Mission Complete.** {count} sources archived in `{collection}`.")
+        except discord.errors.HTTPException:
+            # The interaction token expired (15 minute limit for long researches)
+            await interaction.channel.send(f"<@{interaction.user.id}> 🏁 **Mission Complete.** {count} sources archived in `{collection}`.")
+            
     except Exception as e:
         await interaction.channel.send(f"🚨 **CRITICAL SYSTEM ERROR:** ```{e}```")
 
@@ -203,25 +208,30 @@ async def ask(interaction: discord.Interaction, topic: str, question: str, mode:
     
     async def discord_status_logger(message: str):
         # We edit the deferred response to show progress
-        await interaction.edit_original_response(content=f"### 🧠 Intelligence Report: {topic}\n> **Q:** {question}\n\n{message}")
+        try:
+            await interaction.edit_original_response(content=f"### 🧠 Intelligence Report: {topic}\n> **Q:** {question}\n\n{message}")
+        except discord.errors.HTTPException:
+            # Interaction token expired during massive agentic gap loops. 
+            pass
     
     # 1. Run the massive multi-query pipeline (this will take time)
     answer = await answer_question(topic, question, mode=mode_val, log_func=discord_status_logger, language=language)
     
     # 2. Package the response as a downloadable Markdown file
     markdown_bytes = io.BytesIO(answer.encode('utf-8'))
-    file_attachment = discord.File(markdown_bytes, filename=f"{topic}_Report.md")
+    file = discord.File(fp=markdown_bytes, filename=f"Report_{topic}.md")
     
-    # 3. Deliver final message with the attachment
-    final_text = (
-        f"### 🧠 Intelligence Report: {topic}\n"
-        f"> **Q:** {question}\n\n"
-        f"✅ **Analysis Complete ({mode_val} Mode).** \n"
-        f"Because Discord limits message sizes, your comprehensive report has been elegantly formatted as the attached `.md` file. "
-        f"Open it in any text editor or markdown viewer!"
-    )
-    
-    await interaction.edit_original_response(content=final_text, attachments=[file_attachment])
+    try:
+        await interaction.edit_original_response(
+            content=f"### 🧠 Intelligence Report: {topic}\n> **Q:** {question}\n\n✅ Analysis Complete. Generated report attached below.",
+            attachments=[file]
+        )
+    except discord.errors.HTTPException:
+        # Token expired (took heavily over 15 minutes). Send a standard message instead.
+        await interaction.channel.send(
+            content=f"<@{interaction.user.id}> ### 🧠 Intelligence Report: {topic}\n> **Q:** {question}\n\n✅ Analysis Complete. Generated report attached below.",
+            file=file
+        )
 
 # --- Sync Command (Admin only) ---
 @bot.command()
