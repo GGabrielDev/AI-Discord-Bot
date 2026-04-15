@@ -129,3 +129,79 @@ def delete_checkpoint(subject: str):
     tmp_path = filepath + ".tmp"
     if os.path.exists(tmp_path):
         os.remove(tmp_path)
+
+
+# --- MACRO CHAIN CHECKPOINTS ---
+
+def _chain_checkpoint_path(prompt: str) -> str:
+    """Returns the filesystem path for a chain checkpoint file based on the initial prompt."""
+    import hashlib
+    # Hash the prompt because it can be massive, use as filename
+    prompt_hash = hashlib.md5(prompt.encode('utf-8')).hexdigest()
+    return os.path.join(CHECKPOINT_DIR, f"chain_{prompt_hash}.json")
+
+
+def save_chain_checkpoint(
+    prompt: str,
+    original_save_to: str,
+    iterations: int,
+    depth: int,
+    sub_topics: list[str],
+    current_topic_index: int,
+    status: str = "in_progress"
+):
+    """Atomically saves the overarching chain loop state."""
+    os.makedirs(CHECKPOINT_DIR, exist_ok=True)
+    
+    state = {
+        "prompt": prompt,
+        "save_to": original_save_to,
+        "iterations": iterations,
+        "depth": depth,
+        "sub_topics": sub_topics,
+        "current_topic_index": current_topic_index,
+        "status": status,
+        "last_checkpoint": datetime.now().isoformat()
+    }
+    
+    filepath = _chain_checkpoint_path(prompt)
+    tmp_path = filepath + ".tmp"
+    
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(state, f, indent=2)
+    
+    os.rename(tmp_path, filepath)
+    print(f"[Chain Checkpoint] 💾 Master chain state saved (Topic {current_topic_index + 1}/{len(sub_topics)})")
+
+
+def load_chain_checkpoint(prompt: str) -> dict | None:
+    """Loads a macro chain checkpoint by the hash of the original prompt."""
+    filepath = _chain_checkpoint_path(prompt)
+    
+    if not os.path.exists(filepath):
+        return None
+    
+    try:
+        with open(filepath, "r", encoding="utf-8") as f:
+            state = json.load(f)
+            
+        print(f"[Chain Checkpoint] 📂 Found saved chain: topic {state['current_topic_index'] + 1}/{len(state['sub_topics'])}")
+        return state
+        
+    except (json.JSONDecodeError, KeyError) as e:
+        print(f"[Chain Checkpoint] ⚠️ Corrupted chain checkpoint file detected ({e}). Starting fresh.")
+        delete_chain_checkpoint(prompt)
+        return None
+
+
+def delete_chain_checkpoint(prompt: str):
+    """Removes the chain checkpoint file after successful completion."""
+    filepath = _chain_checkpoint_path(prompt)
+    
+    if os.path.exists(filepath):
+        os.remove(filepath)
+        print(f"[Chain Checkpoint] 🗑️ Master chain checkpoint cleaned up (all topics complete).")
+    
+    tmp_path = filepath + ".tmp"
+    if os.path.exists(tmp_path):
+        os.remove(tmp_path)
