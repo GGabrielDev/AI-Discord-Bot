@@ -46,9 +46,34 @@ def _extract_with_pymupdf(filepath: str) -> str:
     try:
         doc = pymupdf.open(filepath)
         pages = []
+        total_images = 0
         
         for page_num, page in enumerate(doc):
-            text = page.get_text("text")
+            # 1. Standard Extraction (with sort=True for better reconstruction)
+            text = page.get_text("text", sort=True)
+            
+            # 2. Heuristic Scavenger Fallback
+            if not text.strip():
+                # If standard text is empty, try "blocks" – sometimes catches misaligned text objects
+                blocks = page.get_text("blocks", sort=True)
+                if blocks:
+                    print(f"[PDF Parser] 🔍 Page {page_num + 1} empty via standard extraction. Attempting block scavenge...")
+                    extracted_blocks = [b[4].strip() for b in blocks if b[4].strip()]
+                    if extracted_blocks:
+                        text = "\n".join(extracted_blocks)
+            
+            # 3. Final Fallback: "words" – extremely aggressive extraction
+            if not text.strip():
+                words = page.get_text("words", sort=True)
+                if words:
+                    print(f"[PDF Parser] 🔍 Page {page_num + 1} still empty. Attempting raw word scavenge...")
+                    text = " ".join([w[4] for w in words])
+
+            # Check for images if page is STILL empty (to suggest OCR)
+            if not text.strip():
+                img_list = page.get_images(full=True)
+                total_images += len(img_list)
+
             if text.strip():
                 pages.append(f"## Page {page_num + 1}\n\n{text.strip()}")
         
@@ -59,7 +84,11 @@ def _extract_with_pymupdf(filepath: str) -> str:
         if full_text:
             print(f"[PDF Parser] ✅ PyMuPDF extracted {len(full_text)} chars from {len(pages)} pages.")
         else:
-            print("[PDF Parser] ⚠️ PyMuPDF found no extractable text (possibly a scanned/image PDF).")
+            if total_images > 0:
+                print(f"[PDF Parser] ⚠️ Found {total_images} images but 0 characters. This is likely a SCANNED PDF.")
+                print("[PDF Parser] TIP: Enable Marker OCR with 'export ENABLE_MARKER_PDF=1' if you have 2GB+ RAM.")
+            else:
+                print("[PDF Parser] ⚠️ PyMuPDF found no extractable text or images.")
         
         return full_text
         
