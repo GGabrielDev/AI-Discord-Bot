@@ -234,7 +234,7 @@ async def answer_question(topic: str, question: str, mode: str = "Balanced", log
             try:
                 await run_autonomous_loop(
                     subject=gap_query,
-                    collection_name=topic,
+                    topic=topic,
                     max_iterations=1,
                     depth=5,
                     log_func=log_func
