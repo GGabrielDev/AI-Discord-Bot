@@ -289,7 +289,7 @@ async def ask(interaction: discord.Interaction, topic: str, question: str, mode:
     
     try:
         await interaction.edit_original_response(
-            content=f"### 🧠 Intelligence Report: {topic}\n> **Q:** {question}\n\n✅ Analysis Complete. Generated report attached below.",
+            content=f"### 🧠 Intelligence Report: {topic}\n> **Q:** {safe_q}\n\n✅ Analysis Complete. Generated report attached below.",
             attachments=[file]
         )
     except discord.errors.HTTPException:
@@ -299,7 +299,7 @@ async def ask(interaction: discord.Interaction, topic: str, question: str, mode:
         fallback_file = discord.File(fp=markdown_bytes, filename=f"Report_{topic}.md")
         
         await interaction.channel.send(
-            content=f"<@{interaction.user.id}> ### 🧠 Intelligence Report: {topic}\n> **Q:** {question}\n\n✅ Analysis Complete. Generated report attached below.",
+            content=f"<@{interaction.user.id}> ### 🧠 Intelligence Report: {topic}\n> **Q:** {safe_q}\n\n✅ Analysis Complete. Generated report attached below.",
             file=fallback_file
         )
 
