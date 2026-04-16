@@ -55,7 +55,9 @@ from storage.vectordb import VectorDB
     max_depth="How deep to follow internal links (Default: 3)."
 )
 async def crawl_site(interaction: discord.Interaction, url: str, topic: str, max_pages: int = 20, max_depth: int = 3):
-    await interaction.response.send_message(f"### 🕷️ Site Crawler Initialized: {topic}\n> **Target:** <{url}>\n\n⚙️ **Calibrating Domain Shield...**")
+    # Truncate long URLs if they exceed limits
+    safe_url = (url[:100] + '...') if len(url) > 100 else url
+    await interaction.response.send_message(f"### 🕷️ Site Crawler Initialized: {topic}\n> **Target:** <{safe_url}>\n\n⚙️ **Calibrating Domain Shield...**")
     
     status_message = None
     async def discord_logger(message: str, is_sub_step: bool = False):
@@ -100,16 +102,11 @@ async def research(interaction: discord.Interaction, subject: str, iterations: i
     # Check for an interrupted session and notify the user
     checkpoint = load_checkpoint(subject)
     if checkpoint and checkpoint.get("status") == "in_progress":
-        urls_done = len(checkpoint.get("seen_urls", set()))
-        iter_at = checkpoint.get("current_iteration", 1)
-        await interaction.response.send_message(
-            f"⚡ **Resuming interrupted research on `{subject}`!**\n"
-            f"> Previous session was interrupted at iteration {iter_at}/{iterations}.\n"
-            f"> {urls_done} sources already processed — all prior work preserved.\n"
-            f"> Picking up where we left off..."
-        )
+        await interaction.response.send_message(f"⚡ **RESUMING INTERRUPTED SESSION** — Subject: `{subject}`")
     else:
-        await interaction.response.send_message(f"🏗️ **Building Research Environment for `{subject}`...**")
+        # Safe truncation for echoing back potentially long subjects
+        safe_subject = (subject[:100] + '...') if len(subject) > 100 else subject
+        await interaction.response.send_message(f"🏗️ **Building Research Environment for `{safe_subject}`...**")
     
     status_message = None
     
@@ -162,7 +159,9 @@ async def finish(interaction: discord.Interaction):
 )
 @app_commands.autocomplete(topic=topic_autocomplete)
 async def chain_research(interaction: discord.Interaction, prompt: str, topic: str, max_depth: int = 4):
-    await interaction.response.send_message(f"⛓️ **Analyzing Master Prompt:** `{prompt}`\n> Decomposing into exhaustive sub-topics...")
+    # Safe truncation for prompts which can be massive
+    safe_prompt = (prompt[:1500] + '...') if len(prompt) > 1500 else prompt
+    await interaction.response.send_message(f"⛓️ **Analyzing Master Prompt:** `{safe_prompt}`\n> Decomposing into exhaustive sub-topics...")
     sub_topics = await decompose_chain_prompt(prompt)
     
     # Announce the formulated plan
@@ -242,8 +241,9 @@ async def chain_research(interaction: discord.Interaction, prompt: str, topic: s
     app_commands.Choice(name="Investigative (Exhaustive deep-dive, forensic analysis)", value="Investigative")
 ])
 async def ask(interaction: discord.Interaction, topic: str, question: str, mode: app_commands.Choice[str] = None, style: app_commands.Choice[str] = None, language: str = "English"):
-    # Acknowledge the command natively
-    await interaction.response.send_message(f"### 🧠 Intelligence Report: {topic}\n> **Q:** {question}\n\n⚙️ **Initializing Agentic Analysis...**")
+    # Acknowledge the command natively - Truncate long questions to stay within Discord's 2000 char limit
+    safe_q = (question[:1500] + '...') if len(question) > 1500 else question
+    await interaction.response.send_message(f"### 🧠 Intelligence Report: {topic}\n> **Q:** {safe_q}\n\n⚙️ **Initializing Agentic Analysis...**")
     
     # Extract string from choice, default to Balanced
     mode_val = mode.value if mode else "Balanced"
