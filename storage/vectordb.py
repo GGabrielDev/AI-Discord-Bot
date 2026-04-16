@@ -80,13 +80,24 @@ class VectorDB:
         
         return []
 
-    def search_with_metadata(self, query: str, n_results: int = 5):
-        """Search and return both documents and their metadata."""
-        results = self.collection.query(
-            query_texts=[query],
-            n_results=n_results,
-            include=["documents", "metadatas"]
-        )
+    def search_with_metadata(self, query: str, n_results: int = 5, where: dict = None):
+        """Search and return both documents and their metadata, with optional filtering.
+        
+        Args:
+            query: Search query
+            n_results: Number of results to return
+            where: ChromaDB filter dictionary (e.g. {"source": "url"})
+        """
+        kwargs = {
+            "query_texts": [query],
+            "n_results": n_results,
+            "include": ["documents", "metadatas"]
+        }
+        
+        if where:
+            kwargs["where"] = where
+            
+        results = self.collection.query(**kwargs)
         
         if results and results['documents'] and results['metadatas']:
             docs = results['documents'][0]

@@ -194,36 +194,73 @@ async def answer_question(topic: str, question: str, mode: str = "Balanced", sty
     # 1. Parameter Matrix Mapping
     if mode == "Fast":
         num_variations = 0
-        chunks_per_query = 10
+        scout_chunks = 12
+        scavenge_count = 0 # No scavenging for Fast
     elif mode == "Thorough":
         num_variations = 4
-        chunks_per_query = 20
+        scout_chunks = 40
+        scavenge_count = 5 # Scavenge raw from top 5 sources
+    elif mode == "Omniscient":
+        num_variations = 6
+        scout_chunks = 60
+        scavenge_count = 8 # Scavenge top 8 sources
     else: # Balanced
         num_variations = 2
-        chunks_per_query = 15
+        scout_chunks = 25
+        scavenge_count = 3 # Scavenge top 3 sources
 
-    await log(f"⏳ **Phase 1: Generating Semantic Variations...** (Target: {num_variations + 1} distinct queries)")
+    await log(f"⏳ **Phase 1: Multi-Stage Scout initiated...** (Variations: {num_variations + 1})")
     search_queries = await _expand_query(llm, question, num_variations)
     
-    await log(f"⏳ **Phase 2: Rummaging through database...** (Running {len(search_queries)} parallel vector searches)")
-    
-    # 2. Multi-Query Retrieval
-    all_results = []
+    # 2. Stage 1: The Scout (Summaries Only)
+    # We find the 'Hints' first to know which sources are actually worth scavenging.
+    scout_results = []
     for q in search_queries:
-        res = db.search_with_metadata(q, n_results=chunks_per_query)
-        if res:
-            all_results.extend(res)
+        res = db.search_with_metadata(q, n_results=scout_chunks, where={"chunk_type": "summary"})
+        if res: scout_results.extend(res)
             
-    if not all_results:
-        msg = "⚠️ No relevant information found in the database. Have you run the `/research` command for this topic yet?"
+    if not scout_results and mode != "Fast":
+        # Fallback to general search if no summaries exist (e.g. initial crawl with only raw data)
+        await log("⚠️ No summaries found. Falling back to global raw scavenge.")
+        scout_results = []
+        for q in search_queries:
+            res = db.search_with_metadata(q, n_results=scout_chunks)
+            if res: scout_results.extend(res)
+            
+    if not scout_results:
+        msg = "⚠️ No relevant information found in the database. Have you run the `/research` or `/crawl_site` command for this topic yet?"
         await log(msg)
         return msg
 
-    # 3. Deduplicate
+    # 3. Stage 2: The Scavenge (Targeted Raw Extraction)
+    # Identify top sources based on scout hits
+    source_scores = {}
+    for _, meta in scout_results:
+        src = meta.get("source")
+        if src: source_scores[src] = source_scores.get(src, 0) + 1
+    
+    # Sort sources by hit frequency
+    top_sources = sorted(source_scores.keys(), key=lambda x: source_scores[x], reverse=True)[:scavenge_count]
+    
+    await log(f"🔎 **Phase 2: Scavenging technical evidence from {len(top_sources)} high-relevance sources...**")
+    
+    scavenge_results = []
+    for src in top_sources:
+        # For each top source, pull the most relevant raw chunks
+        res = db.search_with_metadata(question, n_results=15, where={
+            "$and": [
+                {"source": src},
+                {"chunk_type": "raw"}
+            ]
+        })
+        if res: scavenge_results.extend(res)
+        
+    # 4. Deduplicate and Assemble
+    all_hits = scout_results + scavenge_results
     unique_chunks = {}
     sources_seen = set()
     
-    for doc, meta in all_results:
+    for doc, meta in all_hits:
         source = meta.get("source", "unknown")
         # Use a simple hash of the first 100 characters to deduplicate
         chunk_hash = hash(doc[:100])
