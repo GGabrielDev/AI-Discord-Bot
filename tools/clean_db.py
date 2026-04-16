@@ -3,14 +3,15 @@ import sys
 import argparse
 from storage.vectordb import VectorDB
 import chromadb
+import asyncio
 
-def clean_collection(collection_name: str, topic_name: str, dry_run: bool = True):
+async def clean_collection(collection_name: str, topic_name: str, dry_run: bool = True):
     """Identifies and removes duplicate URL entries in a ChromaDB collection."""
     print(f"\n--- Cleaning Collection: {collection_name} ---")
     db = VectorDB(collection_name=topic_name)
     
-    # Get all metadata to identify duplicates
-    all_data = db.collection.get(include=["metadatas"])
+    # Get all metadata to identify duplicates (offload to thread)
+    all_data = await asyncio.to_thread(db.collection.get, include=["metadatas"])
     if not all_data or not all_data['metadatas']:
         print("Collection is empty.")
         return
@@ -57,15 +58,15 @@ def clean_collection(collection_name: str, topic_name: str, dry_run: bool = True
 
     if not dry_run and to_delete:
         print(f"PROCEEDING WITH DELETION of {len(to_delete)} chunks...")
-        # Chroma handles deletion in batches
+        # Chroma handles deletion in batches (offload to thread)
         batch_size = 100
         for i in range(0, len(to_delete), batch_size):
-            db.collection.delete(ids=to_delete[i:i + batch_size])
+            await asyncio.to_thread(db.collection.delete, ids=to_delete[i:i + batch_size])
         print("Deletion complete.")
     elif to_delete:
         print("DRY RUN: No files were harmed. Use --execute to apply changes.")
 
-def main():
+async def main_async():
     parser = argparse.ArgumentParser(description="ChromaDB Maintenance: Prune duplicate URL entries.")
     parser.add_argument("--topic", type=str, help="Specific topic (collection) to clean. If omitted, cleans all.")
     parser.add_argument("--execute", action="store_true", help="Apply deletions (default is dry-run).")
@@ -80,10 +81,10 @@ def main():
         if not target:
             print(f"Error: Collection '{args.topic}' not found.")
             sys.exit(1)
-        clean_collection(target[0].name, args.topic, not args.execute)
+        await clean_collection(target[0].name, args.topic, not args.execute)
     else:
         for col in collections:
-            clean_collection(col.name, col.name, not args.execute)
+            await clean_collection(col.name, col.name, not args.execute)
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main_async())

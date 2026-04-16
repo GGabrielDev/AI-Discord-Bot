@@ -114,10 +114,10 @@ async def run_autonomous_loop(subject, topic, max_iterations=3, depth=3, log_fun
                 if url in seen_urls: continue
                 
                 # 2. Persistent Cross-Session Memory Check
-                if db.has_source(url):
+                if await db.has_source(url):
                     await report(f"📦 **Cache Hit:** Surgical probe of known source <{url}>", is_sub_step=False)
                     # Pull chunks for this specific source
-                    cached_chunks = db.get_chunks_by_source(url)
+                    cached_chunks = await db.get_chunks_by_source(url)
                     
                     # Surgical Evaluation: Can we solve the current query with what we already have for this URL?
                     system_prompt = (
@@ -170,12 +170,12 @@ async def run_autonomous_loop(subject, topic, max_iterations=3, depth=3, log_fun
                     
                     # Store the LLM summary as primary chunks
                     summary_chunks = chunk_text(summary)
-                    db.add_chunks(summary_chunks, url, chunk_type="summary")
+                    await db.add_chunks(summary_chunks, url, chunk_type="summary")
                     
                     # Store the raw text to preserve specific granular details (Dual-Ingestion)
                     compressed_raw = compress_raw_text(text)
                     raw_chunks = chunk_text(compressed_raw)
-                    db.add_chunks(raw_chunks, url, chunk_type="raw")
+                    await db.add_chunks(raw_chunks, url, chunk_type="raw")
                     
                     # === WIKI BUILDER: Save human-readable markdown to disk ===
                     store_article(topic, url, summary)
@@ -200,8 +200,8 @@ async def run_autonomous_loop(subject, topic, max_iterations=3, depth=3, log_fun
             await report("🧠 *AI is evaluating current knowledge and identifying gaps...*")
             
             # 1. Sample what we've collected so far
-            sample = db.get_sample(n_samples=15)
-            stats = db.get_collection_stats()
+            sample = await db.get_sample(n_samples=15)
+            stats = await db.get_collection_stats()
             
             await report(f"📊 *Progress: {stats['total_chunks']} chunks from {stats['unique_sources']} sources*")
             

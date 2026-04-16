@@ -83,11 +83,11 @@ async def run_focused_crawler(base_url, topic, max_pages=30, max_depth=3, log_fu
                 
                 # 2. Store (Dual-Ingestion)
                 summary_chunks = chunk_text(summary)
-                db.add_chunks(summary_chunks, url, chunk_type="summary")
+                await db.add_chunks(summary_chunks, url, chunk_type="summary")
                 
                 compressed_raw = compress_raw_text(text)
                 raw_chunks = chunk_text(compressed_raw)
-                db.add_chunks(raw_chunks, url, chunk_type="raw")
+                await db.add_chunks(raw_chunks, url, chunk_type="raw")
                 
                 # 3. Wiki Builder
                 store_article(topic, url, summary)

@@ -117,7 +117,7 @@ async def deep_internal_probe(db: VectorDB, llm: LocalLLM, gap_query: str, mode:
     
     scout_results = []
     for q in probe_queries:
-        res = db.search_with_metadata(q, n_results=scout_depth, where={"chunk_type": "summary"})
+        res = await db.search_with_metadata(q, n_results=scout_depth, where={"chunk_type": "summary"})
         if res: scout_results.extend(res)
         
     # Identification of top sources for Internal Scavenge
@@ -131,13 +131,13 @@ async def deep_internal_probe(db: VectorDB, llm: LocalLLM, gap_query: str, mode:
     # 2. Internal Scavenge (Raw Data from top sources)
     scavenge_results = []
     for src in top_sources:
-        res = db.search_with_metadata(gap_query, n_results=scavenge_depth, where={"$and": [{"source": src}, {"chunk_type": "raw"}]})
+        res = await db.search_with_metadata(gap_query, n_results=scavenge_depth, where={"$and": [{"source": src}, {"chunk_type": "raw"}]})
         if res: scavenge_results.extend(res)
 
     # 3. Fallback: General internal search if scout found nothing
     if not scout_results and not scavenge_results:
         for q in probe_queries:
-            res = db.search_with_metadata(q, n_results=scout_depth)
+            res = await db.search_with_metadata(q, n_results=scout_depth)
             if res: scavenge_results.extend(res)
 
     # Deduplicate and stay within 200-chunk hard cap
@@ -366,7 +366,7 @@ async def answer_question(topic: str, question: str, mode: str = "Balanced", sty
     scavenge_results = []
     for src in top_sources:
         # For each top source, pull the most relevant raw chunks
-        res = db.search_with_metadata(question, n_results=15, where={
+        res = await db.search_with_metadata(question, n_results=15, where={
             "$and": [
                 {"source": src},
                 {"chunk_type": "raw"}

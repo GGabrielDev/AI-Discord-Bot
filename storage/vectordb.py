@@ -1,6 +1,7 @@
 import chromadb
 import re
 import time
+import asyncio
 from config.settings import CHROMA_DB_PATH
 
 class VectorDB:
@@ -22,24 +23,13 @@ class VectorDB:
             metadata={"hnsw:space": "cosine"}
         )
 
-    def add_chunks(self, chunks: list[str], source_url: str, chunk_type: str = "summary", source_title: str = ""):
-        """Saves a list of text chunks into the database with rich metadata.
-        
-        Args:
-            chunks: List of text strings to store
-            source_url: URL where the content originated
-            chunk_type: 'summary' for LLM-analyzed content, 'raw' for unprocessed text
-            source_title: Title of the source page (if available)
-        """
+    async def add_chunks(self, chunks: list[str], source_url: str, chunk_type: str = "summary", source_title: str = ""):
+        """Saves a list of text chunks into the database with rich metadata."""
         if not chunks:
             return
 
         timestamp = str(int(time.time()))
-        
-        # Chroma requires a unique ID for every single chunk
         ids = [f"{source_url}_chunk_{i}" for i in range(len(chunks))]
-        
-        # Rich metadata for filtering and provenance tracking
         metadatas = [{
             "source": source_url,
             "chunk_type": chunk_type,
@@ -49,29 +39,33 @@ class VectorDB:
             "total_chunks": len(chunks)
         } for i in range(len(chunks))]
 
-        self.collection.add(
+        # Thread offload for blocking local embedding generation
+        await asyncio.to_thread(
+            self.collection.add,
             documents=chunks,
             metadatas=metadatas,
             ids=ids
         )
         print(f"[VectorDB] Stored {len(chunks)} {chunk_type} chunks from {source_url}")
 
-    def has_source(self, source_url: str) -> bool:
+    async def has_source(self, source_url: str) -> bool:
         """Checks if any information from this URL already exists in the collection."""
         try:
-            results = self.collection.get(
+            results = await asyncio.to_thread(
+                self.collection.get,
                 where={"source": source_url},
                 limit=1,
-                include=[] # We only care if it exists
+                include=[]
             )
             return len(results['ids']) > 0
         except Exception:
             return False
 
-    def get_chunks_by_source(self, source_url: str) -> list[tuple[str, dict]]:
+    async def get_chunks_by_source(self, source_url: str) -> list[tuple[str, dict]]:
         """Retrieves all chunks and metadata associated with a specific URL."""
         try:
-            results = self.collection.get(
+            results = await asyncio.to_thread(
+                self.collection.get,
                 where={"source": source_url},
                 include=["documents", "metadatas"]
             )
@@ -82,14 +76,8 @@ class VectorDB:
             print(f"[VectorDB] Error retrieving source {source_url}: {e}")
             return []
 
-    def search(self, query: str, n_results: int = 5, chunk_type: str = None):
-        """Searches the database for the most relevant text chunks.
-        
-        Args:
-            query: Search query
-            n_results: Number of results to return
-            chunk_type: Filter by type ('summary' or 'raw'). None = all types.
-        """
+    async def search(self, query: str, n_results: int = 5, chunk_type: str = None):
+        """Searches the database for the most relevant text chunks."""
         kwargs = {
             "query_texts": [query],
             "n_results": n_results
@@ -98,22 +86,15 @@ class VectorDB:
         if chunk_type:
             kwargs["where"] = {"chunk_type": chunk_type}
         
-        results = self.collection.query(**kwargs)
+        results = await asyncio.to_thread(self.collection.query, **kwargs)
         
-        # ChromaDB returns a complex dictionary; we just want the text
         if results and results['documents']:
             return results['documents'][0]
         
         return []
 
-    def search_with_metadata(self, query: str, n_results: int = 5, where: dict = None):
-        """Search and return both documents and their metadata, with optional filtering.
-        
-        Args:
-            query: Search query
-            n_results: Number of results to return
-            where: ChromaDB filter dictionary (e.g. {"source": "url"})
-        """
+    async def search_with_metadata(self, query: str, n_results: int = 5, where: dict = None):
+        """Search and return both documents and their metadata, with optional filtering."""
         kwargs = {
             "query_texts": [query],
             "n_results": n_results,
@@ -123,7 +104,7 @@ class VectorDB:
         if where:
             kwargs["where"] = where
             
-        results = self.collection.query(**kwargs)
+        results = await asyncio.to_thread(self.collection.query, **kwargs)
         
         if results and results['documents'] and results['metadatas']:
             docs = results['documents'][0]
@@ -132,18 +113,15 @@ class VectorDB:
         
         return []
 
-    def get_sample(self, n_samples: int = 10) -> list[str]:
-        """Returns a diverse sample of stored knowledge for evaluation.
-        
-        Used by the re-planner to understand what the agent has learned so far.
-        """
-        total = self.collection.count()
+    async def get_sample(self, n_samples: int = 10) -> list[str]:
+        """Returns a diverse sample of stored knowledge for evaluation."""
+        total = await asyncio.to_thread(self.collection.count)
         if total == 0:
             return []
         
-        # Get up to n_samples documents, spread across the collection
         n = min(n_samples, total)
-        results = self.collection.get(
+        results = await asyncio.to_thread(
+            self.collection.get,
             limit=n,
             include=["documents"]
         )
@@ -152,15 +130,14 @@ class VectorDB:
             return results['documents']
         return []
 
-    def get_collection_stats(self) -> dict:
+    async def get_collection_stats(self) -> dict:
         """Returns stats about the current collection for the re-planner."""
-        total = self.collection.count()
+        total = await asyncio.to_thread(self.collection.count)
         
-        # Get unique source URLs from metadata
         sources = set()
         chunk_types = {}
         if total > 0:
-            all_meta = self.collection.get(include=["metadatas"])
+            all_meta = await asyncio.to_thread(self.collection.get, include=["metadatas"])
             if all_meta and all_meta['metadatas']:
                 for meta in all_meta['metadatas']:
                     if meta:
