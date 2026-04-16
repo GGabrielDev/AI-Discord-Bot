@@ -340,7 +340,7 @@ async def answer_question(topic: str, question: str, mode: str = "Balanced", sty
     # We find the 'Hints' first to know which sources are actually worth scavenging.
     scout_results = []
     for q in search_queries:
-        res = db.search_with_metadata(q, n_results=scout_chunks, where={"chunk_type": "summary"})
+        res = await db.search_with_metadata(q, n_results=scout_chunks, where={"chunk_type": "summary"})
         if res: scout_results.extend(res)
             
     if not scout_results and mode != "Fast":
@@ -348,7 +348,7 @@ async def answer_question(topic: str, question: str, mode: str = "Balanced", sty
         await log("⚠️ No summaries found. Falling back to global raw scavenge.")
         scout_results = []
         for q in search_queries:
-            res = db.search_with_metadata(q, n_results=scout_chunks)
+            res = await db.search_with_metadata(q, n_results=scout_chunks)
             if res: scout_results.extend(res)
             
     if not scout_results:
