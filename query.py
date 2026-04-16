@@ -131,7 +131,7 @@ async def deep_internal_probe(db: VectorDB, llm: LocalLLM, gap_query: str, mode:
     # 2. Internal Scavenge (Raw Data from top sources)
     scavenge_results = []
     for src in top_sources:
-        res = db.search_with_metadata(gap_query, n_results=scavenge_depth, where={"source": src, "chunk_type": "raw"})
+        res = db.search_with_metadata(gap_query, n_results=scavenge_depth, where={"$and": [{"source": src}, {"chunk_type": "raw"}]})
         if res: scavenge_results.extend(res)
 
     # 3. Fallback: General internal search if scout found nothing
