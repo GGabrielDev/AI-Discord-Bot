@@ -300,6 +300,7 @@ async def ask(interaction: discord.Interaction, topic: str, question: str,
             await interaction.channel.send(f"❌ **Failed to read report:** {e}")
             return
 
+    try:
         answer_data = await answer_question(
             topic, 
             question, 
@@ -314,12 +315,12 @@ async def ask(interaction: discord.Interaction, topic: str, question: str,
         # 2. Package the response (Dual File Delivery)
         files = []
         
-        # English Version (Always present)
+        # English Version
         en_text = answer_data["english"]
         en_bytes = io.BytesIO(en_text.encode('utf-8'))
         files.append(discord.File(fp=en_bytes, filename=f"Report_{topic}_EN.md"))
         
-        # Translated Version (If applicable)
+        # Translated Version
         if answer_data.get("translated"):
             tr_text = answer_data["translated"]
             tr_bytes = io.BytesIO(tr_text.encode('utf-8'))
@@ -331,7 +332,7 @@ async def ask(interaction: discord.Interaction, topic: str, question: str,
                 attachments=files
             )
         except discord.errors.HTTPException:
-            # Token expired (took heavily over 15 minutes). Send as a new message.
+            # Token expired. Send as a new message.
             await interaction.channel.send(
                 content=f"<@{interaction.user.id}> ### 🧠 Intelligence Report: {topic}\n> **Q:** {safe_q}\n\n✅ Analysis Complete. Generated reports attached below.",
                 files=files
