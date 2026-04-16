@@ -2,34 +2,36 @@
 
 Recommended configurations for running the Autonomous Research Agent with `llama-server` and the `unsloth/gemma-4-E4B-it-GGUF:UD-Q8_K_XL` model.
 
-## Quick Start (Recommended)
+## Quick Start (Max Context: 128K)
+
+Recommended command for running **Gemma 4** or **DeepSeek-R1** at maximum research capacity.
 
 ```bash
 llama-server \
-  -m /path/to/gemma-4-E4B-it-UD-Q8_K_XL.gguf \
+  -m /path/to/model-Q8_K_XL.gguf \
   --jinja \
   -ngl 99 \
-  -c 32768 \
+  -c 131072 \
   --flash-attn on \
   --cache-type-k q8_0 \
   --cache-type-v q8_0 \
   --host 0.0.0.0 \
   --port 8080
 ```
+> [!NOTE]
+> For **DeepSeek-R1 (Qwen)**, you can omit the `--jinja` flag as it uses standard ChatML templates.
 
 ## Flag Breakdown
 
-| Flag | Value | Purpose |
-|------|-------|---------|
 | `-m` | Path to `.gguf` | The quantized model file |
-| `--jinja` | (flag) | **Required** for Gemma 4's chat template to work properly |
-| `-ngl 99` | 99 | Offload all layers to GPU. Reduce if you run out of VRAM |
-| `-c 32768` | 32K | Context window size. Gemma 4 E4B supports up to 128K, but 32K is a good balance of capability vs VRAM for research |
-| `--flash-attn on` | `on` | Enables Flash Attention. **Required** for KV cache quantization to work correctly |
-| `--cache-type-k q8_0` | q8_0 | Quantize the K-cache to 8-bit. Minimal quality loss, significant VRAM savings |
-| `--cache-type-v q8_0` | q8_0 | Quantize the V-cache to 8-bit |
-| `--host 0.0.0.0` | Bind all interfaces | Makes the server accessible to the bot |
-| `--port 8080` | 8080 | Must match `LLM_API_BASE` in your `.env` |
+| `--jinja` | (flag) | **Required for Gemma 4**. Omit for DeepSeek/Qwen. |
+| `-ngl 99` | 99 | Offload all layers to GPU. |
+| `-c 131072` | 128K | **Max Context**. Matches the bot's default `LLM_CONTEXT_WINDOW`. |
+| `--flash-attn on` | `on` | Enables Flash Attention. **Required** for 128K stability. |
+| `--cache-type-k q8_0` | q8_0 | 8-bit KV Cache. **Mandatory** for 128K to fit in VRAM. |
+| `--cache-type-v q8_0` | q8_0 | 8-bit V-cache quantization. |
+| `--host 0.0.0.0` | Bind all interfaces | Makes the server accessible to the bot. |
+| `--port 8080` | 8080 | Must match `LLM_API_BASE` in your `.env`. |
 
 ## Context Window Sizing
 
@@ -37,14 +39,19 @@ The research agent sends varying amounts of context depending on the task:
 
 | Task | Typical Context | Recommended `-c` |
 |------|----------------|-------------------|
-| Query planning | ~500 tokens | Any |
-| Page summarization | 2K-8K tokens | 16K+ |
-| Knowledge gap evaluation | 2K-5K tokens | 16K+ |
-| RAG query (/ask) | 3K-10K tokens | 16K+ |
+| Deep Page Crawling | 10K-50K tokens | 128K |
+| Massive RAG Synthesis | 20K-80K tokens | 128K |
+| Multihop Gap Seeking | 5K-30K tokens | 128K |
 
-**Recommendation:** Start with `-c 32768` (32K). This handles all research tasks comfortably. Only increase if you're processing very long documents or want to feed more context into RAG queries.
+**Recommendation:** Use `-c 131072` (128K). This allows the research agent to ingest massive amounts of scraped data into a single synthesis pass, drastically improving the quality of the final report.
 
-**VRAM vs Context:** Each doubling of context roughly doubles KV cache memory. With `q8_0` KV cache quantization, 32K context uses ~50% less KV cache VRAM compared to the default `f16`.
+**VRAM vs Context counts (8B Models with q8_0 KV Cache):**
+- **32K Context**: ~2GB VRAM used for KV cache.
+- **64K Context**: ~4GB VRAM used for KV cache.
+- **128K Context**: ~8GB VRAM used for KV cache.
+
+> [!TIP]
+> If using an 8B model (like DeepSeek-R1-8B) on a 12GB or 16GB VRAM card, **128K context is easily achievable** using the `q8_0` flags.
 
 ## KV Cache Quantization Options
 
