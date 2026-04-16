@@ -323,10 +323,14 @@ async def ask(interaction: discord.Interaction, topic: str, question: str, mode:
             attachments=[file]
         )
     except discord.errors.HTTPException:
-        # Token expired (took heavily over 15 minutes). Send a standard message instead.
+        # Token expired (took heavily over 15 minutes). The previous upload attempt exhausted the BytesIO stream.
+        # We MUST seek(0) and rebuild the discord.File to prevent uploading a 0-byte (NaN KB) empty file!
+        markdown_bytes.seek(0)
+        fallback_file = discord.File(fp=markdown_bytes, filename=f"Report_{topic}.md")
+        
         await interaction.channel.send(
             content=f"<@{interaction.user.id}> ### 🧠 Intelligence Report: {topic}\n> **Q:** {question}\n\n✅ Analysis Complete. Generated report attached below.",
-            file=file
+            file=fallback_file
         )
 
 # --- Sync Command (Admin only) ---
