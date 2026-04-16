@@ -110,6 +110,12 @@ class LocalLLM:
         """
         try:
             timeout_val = timeout_override or LLM_TIMEOUT
+            
+            # Simple heuristic check for large inputs
+            total_words = len(system_prompt.split()) + len(user_prompt.split())
+            if total_words > 40000:
+                print(f"[LLM] ⚠️ Sending massive payload ({total_words:,} words). Inference may be slow.")
+
             response = await asyncio.wait_for(
                 self.client.chat.completions.create(
                     model=self.model,

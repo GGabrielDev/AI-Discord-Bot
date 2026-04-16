@@ -7,9 +7,35 @@ from config.settings import LLM_CONTEXT_WINDOW
 from agent.checkpoint import check_soft_stop
 
 # Safety ceiling for context fed to the LLM during /ask synthesis.
-# Estimated at ~0.65 words per token (conservative for technical data), 
+# Estimated at ~0.60 words per token (conservative for technical/multilingual text), 
 # with 80% headroom for system prompt + generation.
-MAX_CONTEXT_WORDS = int(LLM_CONTEXT_WINDOW * 0.65 * 0.8)
+MAX_CONTEXT_WORDS = int(LLM_CONTEXT_WINDOW * 0.60 * 0.8)
+
+def fit_to_context_budget(system_prompt: str, user_prompt: str, max_words: int) -> tuple[str, str]:
+    """Ensures total words across system and user prompts stay within max_words.
+    Truncates the user_prompt from the TOP (oldest parts) if necessary.
+    """
+    sys_words = system_prompt.split()
+    user_words = user_prompt.split()
+    total = len(sys_words) + len(user_words)
+    
+    if total <= max_words:
+        return system_prompt, user_prompt
+        
+    # How many words do we need to cut?
+    excess = total - max_words
+    
+    # We primarily truncate the user_prompt (which contains research context/drafts)
+    if len(user_words) > excess + 100:
+        # Keep the latest content (bottom of user_prompt usually contains current instructions/question)
+        print(f"[Context Shield] Truncating user prompt by {excess} words.")
+        # But for research context, cutting from top might lose summaries. 
+        # Actually, let's truncate context text *before* it gets here.
+        # This function is the final 'safety net'.
+        new_user_words = user_words[excess:]
+        return system_prompt, "[... context truncated for budget]\n" + " ".join(new_user_words)
+    
+    return system_prompt, user_prompt
 
 async def _expand_query(llm: LocalLLM, question: str, num_variations: int) -> list[str]:
     """Uses the LLM to generate semantic variations of the original question."""
@@ -282,11 +308,36 @@ async def answer_question(topic: str, question: str, mode: str = "Balanced", sty
     context_text = "\n\n".join(context_parts)
     
     # Guard: truncate if the assembled context exceeds the model's budget
+    # We prioritize Summaries over Raw Source Data during truncation
     context_words = context_text.split()
     if len(context_words) > MAX_CONTEXT_WORDS:
-        await log(f"⚠️ Context exceeds budget ({len(context_words):,} words). Truncating to {MAX_CONTEXT_WORDS:,} words to protect model stability.")
-        context_text = " ".join(context_words[:MAX_CONTEXT_WORDS]) + "\n\n[... context truncated for model budget]"
+        await log(f"⚠️ Context exceeds budget ({len(context_words):,} words). Applying tiered truncation...")
         
+        # New Tiered Approach:
+        # 1. Truncate 'Raw Source Data' blocks first
+        # 2. Finally truncate everything to the limit if still over
+        parts = context_text.split("\n\n")
+        summaries = [p for p in parts if "--- Analyzed Summary" in p]
+        raw_parts = [p for p in parts if "--- Raw Source Data" in p]
+        
+        # Keep as many summaries as possible, then fill with raw
+        new_parts = summaries[:]
+        current_len = sum(len(p.split()) for p in new_parts)
+        
+        for p in raw_parts:
+            p_len = len(p.split())
+            if current_len + p_len < MAX_CONTEXT_WORDS:
+                new_parts.append(p)
+                current_len += p_len
+            else:
+                break
+        
+        context_text = "\n\n".join(new_parts)
+        # Final hard cap
+        final_words = context_text.split()
+        if len(final_words) > MAX_CONTEXT_WORDS:
+            context_text = " ".join(final_words[:MAX_CONTEXT_WORDS]) + "\n\n[... hard truncation...]"
+
     if _extra_context:
         context_text = f"{_extra_context}\n\n{context_text}"
         
@@ -330,6 +381,9 @@ async def answer_question(topic: str, question: str, mode: str = "Balanced", sty
             f"SOURCES CONSULTED:\n{source_list}\n\n"
             f"USER QUESTION: {question}"
         )
+
+    # 4. Final Context Shield Check: Combine and ensure it fits the model
+    system_prompt, user_prompt = fit_to_context_budget(system_prompt, user_prompt, MAX_CONTEXT_WORDS)
 
     answer = await llm.generate_text(system_prompt, user_prompt, temperature=0.3, max_tokens=8192, timeout_override=600)
     
