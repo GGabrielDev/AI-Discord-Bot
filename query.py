@@ -58,7 +58,67 @@ async def extract_gap_queries(llm: LocalLLM, answer_markdown: str) -> list[str]:
         return result["queries"]
     return []
 
-async def answer_question(topic: str, question: str, mode: str = "Balanced", log_func=None, draft_callback=None, language: str = "English", _current_auto_loop: int = 0, _draft: str = None) -> str:
+async def deep_internal_probe(db: VectorDB, llm: LocalLLM, gap_query: str, mode: str, log_func=None) -> tuple[str, list[str], bool]:
+    """Exhaustively searches the local database using multiple semantic variations to resolve a gap before hitting the web.
+    
+    Returns:
+        tuple (found_text, source_urls, is_fully_resolved)
+    """
+    if mode == "Fast":
+        return "", [], False
+        
+    num_probes = 5 if mode in ["Thorough", "Omniscient"] else 3
+    chunks_per_probe = 20 if mode in ["Thorough", "Omniscient"] else 12
+    
+    async def log(m):
+        if log_func: await log_func(m, True)
+        
+    await log(f"🧪 **SIP Probe initiated:** Decomposing `{gap_query}` into semantic vectors...")
+    
+    # 1. Generate deep probes
+    probe_queries = await _expand_query(llm, gap_query, num_probes - 1)
+    
+    all_results = []
+    for q in probe_queries:
+        res = db.search_with_metadata(q, n_results=chunks_per_probe)
+        if res: all_results.extend(res)
+        
+    if not all_results:
+        return "", [], False
+        
+    # 2. Deduplicate and focus on target info
+    unique_knowledge = {}
+    sources = set()
+    for doc, meta in all_results:
+        chunk_hash = hash(doc[:150])
+        if chunk_hash not in unique_knowledge:
+            unique_knowledge[chunk_hash] = doc
+            sources.add(meta.get("source", "unknown"))
+            
+    context = "\n\n".join(list(unique_knowledge.values())[:30]) # Limit to ~30 best chunks for probe analysis
+    
+    # 3. LLM Evaluator: Can we solve this now?
+    system_prompt = (
+        "You are a strict knowledge verification engine. You are given a specific KNOWLEDGE GAP and a list of chunks from an internal database.\n"
+        "Your task: Determine if the answer to the gap is definitively contained in chunks.\n\n"
+        "Rules:\n"
+        "- If the answer IS there, provide the full technical answer and set 'resolved' to true.\n"
+        "- If the answer is partially there but key details are missing, return what you have and set 'resolved' to false.\n"
+        "- If search found nothing relevant, set 'resolved' to false.\n\n"
+        "Return ONLY a valid JSON object:\n"
+        "{\"resolved\": bool, \"answer\": \"string or empty\", \"confidence\": 0.0-1.0}"
+    )
+    user_prompt = f"GAP TO RESOLVE: {gap_query}\n\nINTERNAL DATA:\n{context}"
+    
+    await log(f"🧠 *Evaluating {len(unique_knowledge)} internal matches for a native solution...*")
+    result = await llm.generate_json(system_prompt, user_prompt)
+    
+    if result and result.get("resolved") and result.get("confidence", 0) > 0.8:
+        return result["answer"], list(sources), True
+        
+    return result.get("answer", "") if result else "", list(sources), False
+
+async def answer_question(topic: str, question: str, mode: str = "Balanced", log_func=None, draft_callback=None, language: str = "English", _current_auto_loop: int = 0, _draft: str = None, _extra_context: str = None) -> str:
     """Answers a question pulling from the vector DB, with true Agentic RAG auto-looping for explicitly identified gaps."""
     # Import here to avoid circular imports if query.py is loaded first
     from agent.loop import run_autonomous_loop
@@ -138,6 +198,9 @@ async def answer_question(topic: str, question: str, mode: str = "Balanced", log
     if len(context_words) > MAX_CONTEXT_WORDS:
         await log(f"⚠️ Context exceeds budget ({len(context_words):,} words). Truncating to {MAX_CONTEXT_WORDS:,} words to protect model stability.")
         context_text = " ".join(context_words[:MAX_CONTEXT_WORDS]) + "\n\n[... context truncated for model budget]"
+        
+    if _extra_context:
+        context_text = f"{_extra_context}\n\n{context_text}"
         
     source_list = "\n".join([f"  - {url}" for url in sources_seen])
     
@@ -230,7 +293,33 @@ async def answer_question(topic: str, question: str, mode: str = "Balanced", log
                 break
                 
             await loc_log(f"🚀 *Gap Tracker {idx+1}/{len(gap_queries)}* -> `{gap_query}`")
-            # Deep depth (5) but extremely narrow (1 iteration) directly into the topic pool
+
+            # --- TASK: DEEP SEMANTIC INTERNAL PROBING (SIP) ---
+            # We try to solve the gap using what we HAVE before hitting the web
+            sip_answer, sip_sources, is_resolved = await deep_internal_probe(db, llm, gap_query, mode, log_func=log_func)
+            
+            if is_resolved:
+                await loc_log(f"✅ **SIP MATCH:** High-confidence answer found internally! Skipping web search for this gap.", is_sub_step=True)
+                # We inject this "Virtual Research" into the context for the next draft refinement
+                # We format it to look like it came from research so the refiner treats it properly
+                sip_context = f"--- Internal Deep Probe Resolution (Self-Search) ---\n{sip_answer}"
+                answer = await answer_question(
+                    topic=topic,
+                    question=question,
+                    mode="Fast", # Just synthesis
+                    log_func=log_func,
+                    draft_callback=draft_callback,
+                    language=language,
+                    _current_auto_loop=_current_auto_loop + 1,
+                    _draft=answer, # Use current draft
+                    _extra_context=sip_context
+                )
+                continue # Gap solved!
+            
+            # If not resolved or partially resolved, we hit the web (Graceful Fallback)
+            if sip_answer:
+                await loc_log(f"🔸 *Partial internal match found, but doubt remains. Initiating web fallback...*", is_sub_step=True)
+
             try:
                 await run_autonomous_loop(
                     subject=gap_query,
