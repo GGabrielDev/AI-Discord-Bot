@@ -239,7 +239,7 @@ async def run_autonomous_loop(subject, topic, max_iterations=3, depth=3, log_fun
             )
 
     # Final stats
-    final_stats = db.get_collection_stats()
+    final_stats = await db.get_collection_stats()
     await report(f"\n📊 **Final: {final_stats['total_chunks']} chunks from {final_stats['unique_sources']} sources**")
     
     # === CLEANUP: Research completed successfully, remove checkpoint ===

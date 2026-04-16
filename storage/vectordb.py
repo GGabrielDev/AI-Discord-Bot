@@ -163,24 +163,23 @@ class VectorDB:
 
 # Quick manual test if you run this file directly
 if __name__ == "__main__":
-    db = VectorDB()
-    db.add_chunks(
-        ["The Venezuelan Central Bank recently updated its reserve policies."], 
-        "http://test-url.com",
-        chunk_type="summary",
-        source_title="Test Article"
-    )
-    
-    print("\n--- Testing Search ---")
-    results = db.search("What is the central bank doing?")
-    for res in results:
-        print(f"Found: {res}")
-    
-    print("\n--- Testing Search with Metadata ---")
-    results_meta = db.search_with_metadata("central bank")
-    for doc, meta in results_meta:
-        print(f"Doc: {doc[:80]}... | Source: {meta['source']} | Type: {meta['chunk_type']}")
-    
-    print("\n--- Testing Stats ---")
-    stats = db.get_collection_stats()
-    print(f"Stats: {stats}")
+    async def test():
+        db = VectorDB(collection_name="test_collection")
+        
+        print("--- Testing Add ---")
+        await db.add_chunks(["The central bank raised interest rates."], "https://test.com", "summary")
+        
+        print("\n--- Testing Search ---")
+        results = await db.search("interest rates")
+        print(f"Results: {results}")
+        
+        print("\n--- Testing Search with Metadata ---")
+        results_meta = await db.search_with_metadata("central bank")
+        for doc, meta in results_meta:
+            print(f"Doc: {doc[:80]}... | Source: {meta['source']} | Type: {meta['chunk_type']}")
+        
+        print("\n--- Testing Stats ---")
+        stats = await db.get_collection_stats()
+        print(f"Stats: {stats}")
+
+    asyncio.run(test())
