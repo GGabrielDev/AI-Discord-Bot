@@ -20,7 +20,8 @@ import time
 from llm.client import LocalLLM
 from agent.planner import generate_search_queries, evaluate_and_replan
 from agent.summarizer import summarize_page, compress_raw_text, chunk_text
-from agent.wiki_builder import store_article
+from config.settings import LLM_MODEL_NAME, SAFE_WORD_BUDGET
+from agent.wiki_builder import store_article, build_topic_wiki
 from agent.checkpoint import save_checkpoint, load_checkpoint, delete_checkpoint, check_soft_stop
 from tools.search import get_search_results
 from tools.scraper import scrape_text_from_url
@@ -127,8 +128,19 @@ async def run_autonomous_loop(subject, topic, max_iterations=3, depth=3, log_fun
                         "- If NO, set 'found' to false.\n\n"
                         "Return ONLY JSON: {\"found\": bool, \"answer\": \"string\"}"
                     )
-                    # Context limit for surgical probe: 100 chunks max (prevent overflow)
-                    probe_context = "\n\n".join([d for d, m in cached_chunks[:100]])
+                    # Context limit for surgical probe: Dynamic based on budget
+                    # Surgical probes are targeted, so we allow up to 40% of the budget for the context
+                    max_probe_words = int(SAFE_WORD_BUDGET * 0.4)
+                    current_words = 0
+                    probe_chunks = []
+                    for d, m in cached_chunks:
+                        chunk_words = len(d.split())
+                        if current_words + chunk_words > max_probe_words:
+                            break
+                        probe_chunks.append(d)
+                        current_words += chunk_words
+                    
+                    probe_context = "\n\n".join(probe_chunks)
                     user_prompt = f"QUERY: {query}\n\nCACHED DATA FROM {url}:\n{probe_context}"
                     
                     probe_result = await llm.generate_json(system_prompt, user_prompt)

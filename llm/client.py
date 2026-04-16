@@ -2,7 +2,7 @@ import json
 import re
 import asyncio
 from openai import AsyncOpenAI
-from config.settings import LLM_API_BASE, LLM_API_KEY, LLM_MODEL_NAME, LLM_MAX_TOKENS, LLM_TIMEOUT
+from config.settings import LLM_API_BASE, LLM_API_KEY, LLM_MODEL_NAME, LLM_MAX_TOKENS, LLM_TIMEOUT, SAFE_WORD_BUDGET
 
 class LocalLLM:
     """Hardened LLM client optimized for local inference with Gemma 4 E4B.
@@ -152,15 +152,16 @@ class LocalLLM:
             return ""
 
     async def generate_text_with_budget(self, system_prompt: str, user_prompt: str, 
-                                         max_input_words: int = 8000, **kwargs) -> str:
+                                         max_input_words: int = None, **kwargs) -> str:
         """Text generation with automatic input truncation.
         
         Useful when feeding large scraped content that might exceed context limits.
-        Truncates user_prompt to max_input_words to stay within budget.
+        Truncates user_prompt to SAFE_WORD_BUDGET to stay within hardware limits.
         """
+        budget = max_input_words or SAFE_WORD_BUDGET
         words = user_prompt.split()
-        if len(words) > max_input_words:
-            print(f"[LLM] Truncating input from {len(words)} to {max_input_words} words")
-            user_prompt = " ".join(words[:max_input_words]) + "\n\n[... content truncated for context budget]"
+        if len(words) > budget:
+            print(f"[LLM] Truncating input from {len(words)} to {budget} words")
+            user_prompt = " ".join(words[:budget]) + "\n\n[... content truncated for context budget]"
         
         return await self.generate_text(system_prompt, user_prompt, **kwargs)

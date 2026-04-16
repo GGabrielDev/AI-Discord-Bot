@@ -1,15 +1,13 @@
 import re
 from llm.client import LocalLLM
-from config.settings import LLM_CONTEXT_WINDOW
-
-# Max words to send per summarization call. 
-# Gemma 4 E4B can handle large contexts, but we keep it reasonable 
-# to get focused summaries and avoid overwhelming the model.
-MAX_WORDS_PER_CALL = 3000
+from config.settings import LLM_CONTEXT_WINDOW, SAFE_WORD_BUDGET
 
 # Safety ceiling: max words we'll ever feed to the LLM in a single call.
-# Estimated at ~0.75 words per token, with 80% of the context window as headroom.
-MAX_INPUT_WORDS = int(LLM_CONTEXT_WINDOW * 0.75 * 0.8)
+MAX_INPUT_WORDS = SAFE_WORD_BUDGET
+
+# Max words to send per summarization call. 
+# We cap this at 3000 or the total budget, whichever is smaller.
+MAX_WORDS_PER_CALL = min(3000, int(SAFE_WORD_BUDGET * 0.8))
 
 
 def chunk_text(text: str, target_size: int = 400, overlap_sentences: int = 2) -> list[str]:

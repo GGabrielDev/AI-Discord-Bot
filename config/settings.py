@@ -17,6 +17,10 @@ LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "2048"))
 LLM_CONTEXT_WINDOW = int(os.getenv("LLM_CONTEXT_WINDOW", "131072"))  # 128K for Gemma 4 E4B
 LLM_TIMEOUT = int(os.getenv("LLM_TIMEOUT", "120"))  # seconds
 
+# --- Context Budgeting ---
+# Estimated at ~0.75 words per token, with 80% of the context window as headroom.
+SAFE_WORD_BUDGET = int(LLM_CONTEXT_WINDOW * 0.75 * 0.8)
+
 # --- Search Settings ---
 SEARXNG_URL = os.getenv("SEARXNG_URL", "http://localhost:8081")
 

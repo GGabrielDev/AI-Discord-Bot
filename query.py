@@ -3,7 +3,7 @@ import asyncio
 import re
 from storage.vectordb import VectorDB
 from llm.client import LocalLLM
-from config.settings import LLM_CONTEXT_WINDOW
+from config.settings import LLM_CONTEXT_WINDOW, SAFE_WORD_BUDGET
 from agent.checkpoint import check_soft_stop
 
 # Safety ceiling for context fed to the LLM during /ask synthesis.
@@ -140,15 +140,20 @@ async def deep_internal_probe(db: VectorDB, llm: LocalLLM, gap_query: str, mode:
             res = await db.search_with_metadata(q, n_results=scout_depth)
             if res: scavenge_results.extend(res)
 
-    # Deduplicate and stay within 200-chunk hard cap
+    # Deduplicate and stay within Budget-Aware cap
     unique_knowledge = {}
     sources = set()
+    
+    # Estimate safe chunk count: Each chunk is ~400 words. 
+    # We want to leave some headroom for the prompt/system instructions.
+    max_chunks = max(10, int(SAFE_WORD_BUDGET / 450)) 
+    
     for doc, meta in (scout_results + scavenge_results):
         chunk_hash = hash(doc[:150])
         if chunk_hash not in unique_knowledge:
             unique_knowledge[chunk_hash] = doc
             sources.add(meta.get("source", "unknown"))
-        if len(unique_knowledge) >= 200: break # Hard Cap
+        if len(unique_knowledge) >= max_chunks: break # Dynamic Cap
             
     context = "\n\n".join(list(unique_knowledge.values()))
     
