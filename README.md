@@ -170,9 +170,18 @@ llama-server \
 python main.py
 ```
 
-**7. Sync slash commands (first run only):**
-
 Send `!sync` in your Discord server to register the `/research` and `/ask` slash commands.
+
+---
+
+## 🧠 Model Compatibility
+
+The bot is designed to be model-agnostic but includes specialized hardening for **Chain-of-Thought (CoT)** architectures.
+
+- **DeepSeek-R1 Support**: Fully compatible with `DeepSeek-R1-0528-Qwen3-8B` and other R1 variants.
+- **Thinking Filter**: The bot automatically detects and strips `<think>...</think>` tags from local reasoning models. This ensures your Discord summaries and final Markdown reports remain clean and professional, hiding the AI's internal "mumbling" while preserving the final answer.
+- **JSON Hardening**: Optimized to extract structured data even if the model "thinks" before or inside its JSON output.
+- **Ollama / vLLM / LM Studio**: Works with any OpenAI-compatible local server. Ensure `LLM_API_BASE` in your `.env` points to your local endpoint (e.g., `http://localhost:8080/v1`).
 
 ---
 
@@ -245,7 +254,7 @@ AI-Discord-Bot/
 │   ├── wiki_builder.py      # Markdown knowledge base generator
 │   └── checkpoint.py        # Crash-resilient state persistence
 ├── llm/
-│   └── client.py            # Hardened LLM client with retries & token tracking
+│   └── client.py            # Hardened client with retries, token tracking, and R1 "Thinking" filters
 ├── tools/
 │   ├── scraper.py           # Async HTML/PDF streaming scraper
 │   ├── search.py            # Async SearXNG search integration

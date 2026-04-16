@@ -42,6 +42,14 @@ class LocalLLM:
                 f"[LLM] {label}Tokens: {prompt_tok:,} in → {completion_tok:,} out "
                 f"| Session total: {total_session:,}"
             )
+            
+    def _clean_thinking(self, text: str) -> str:
+        """Strips reasoning blocks like <think>...</think> often found in DeepSeek-R1 responses."""
+        if not text:
+            return ""
+        # Remove anything between <think> and </think> tags, case-insensitively and across multiple lines
+        cleaned = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL | re.IGNORECASE)
+        return cleaned.strip()
 
     async def generate_json(self, system_prompt: str, user_prompt: str, max_retries: int = 2) -> dict:
         """Forces the local LLM to output a dictionary/JSON with retry logic.
@@ -71,6 +79,9 @@ class LocalLLM:
                 
                 content = response.choices[0].message.content
                 self._log_usage(response, "JSON ")
+                
+                # First, strip reasoning tags (<think>...</think>) for models like DeepSeek-R1
+                content = self._clean_thinking(content)
                 
                 # Local reasoning models often wrap JSON in markdown blocks or add extra text.
                 # This regex surgically extracts just the JSON object/array.
@@ -132,7 +143,7 @@ class LocalLLM:
                 timeout=timeout_val
             )
             self._log_usage(response, "Text ")
-            return response.choices[0].message.content
+            return self._clean_thinking(response.choices[0].message.content)
         except asyncio.TimeoutError:
             print(f"[LLM] Timeout after {timeout_val}s during text generation.")
             return ""
