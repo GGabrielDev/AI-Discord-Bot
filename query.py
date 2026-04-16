@@ -13,27 +13,30 @@ MAX_CONTEXT_WORDS = int(LLM_CONTEXT_WINDOW * 0.60 * 0.8)
 
 def fit_to_context_budget(system_prompt: str, user_prompt: str, max_words: int) -> tuple[str, str]:
     """Ensures total words across system and user prompts stay within max_words.
-    Truncates the user_prompt from the TOP (oldest parts) if necessary.
+    Truncates the user_prompt from the TOP (oldest parts) if necessary,
+    while PRESERVING all original newlines and formatting.
     """
-    sys_words = system_prompt.split()
-    user_words = user_prompt.split()
-    total = len(sys_words) + len(user_words)
+    sys_words_est = len(system_prompt.split())
+    user_words_est = len(user_prompt.split())
+    total_est = sys_words_est + user_words_est
     
-    if total <= max_words:
+    if total_est <= max_words:
         return system_prompt, user_prompt
         
-    # How many words do we need to cut?
-    excess = total - max_words
+    # We need to truncate strings without using split().join() which destroys newlines.
+    # We use a character-based proportional slice as a safe estimate.
+    # Words * 6 is a safe character estimate for technical text.
+    safe_char_limit = max_words * 6
+    sys_chars = len(system_prompt)
     
-    # We primarily truncate the user_prompt (which contains research context/drafts)
-    if len(user_words) > excess + 100:
-        # Keep the latest content (bottom of user_prompt usually contains current instructions/question)
-        print(f"[Context Shield] Truncating user prompt by {excess} words.")
-        # But for research context, cutting from top might lose summaries. 
-        # Actually, let's truncate context text *before* it gets here.
-        # This function is the final 'safety net'.
-        new_user_words = user_words[excess:]
-        return system_prompt, "[... context truncated for budget]\n" + " ".join(new_user_words)
+    available_user_chars = safe_char_limit - sys_chars - 500 # safety margin
+    if available_user_chars < 1000: available_user_chars = 1000 # guard rail
+    
+    if len(user_prompt) > available_user_chars:
+        print(f"[Context Shield] Truncating user prompt to ~{available_user_chars} chars (Preserving Structure).")
+        # Truncate from the top (oldest content/context) and keep the bottom (new queries/instructions)
+        truncated_user = user_prompt[-available_user_chars:]
+        return system_prompt, f"[... context truncated for budget ...]\n{truncated_user}"
     
     return system_prompt, user_prompt
 
@@ -333,10 +336,11 @@ async def answer_question(topic: str, question: str, mode: str = "Balanced", sty
                 break
         
         context_text = "\n\n".join(new_parts)
-        # Final hard cap
-        final_words = context_text.split()
-        if len(final_words) > MAX_CONTEXT_WORDS:
-            context_text = " ".join(final_words[:MAX_CONTEXT_WORDS]) + "\n\n[... hard truncation...]"
+        # Final hard cap (Character based to preserve newlines)
+        if len(context_text.split()) > MAX_CONTEXT_WORDS:
+            # We slice by characters (words * 6 is a safe technical avg)
+            char_cap = MAX_CONTEXT_WORDS * 6
+            context_text = context_text[:char_cap] + "\n\n[... hard structural truncation for budget ...]"
 
     if _extra_context:
         context_text = f"{_extra_context}\n\n{context_text}"
