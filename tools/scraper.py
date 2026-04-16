@@ -13,11 +13,17 @@ MAX_PDF_SIZE = 150 * 1024 * 1024
 
 async def scrape_text_from_url(url: str, timeout: int = 15, log_func=None) -> str:
     """Safely streams a URL, checks content type, and extracts pure readable text or PDF markdown."""
+    result = await _scrape_core(url, timeout, log_func, want_links=False)
+    return result
+
+async def scrape_with_links(url: str, timeout: int = 20, log_func=None) -> tuple[str, list[str]]:
+    """Same as scrape_text_from_url but also returns all absolute URLs found on the page."""
+    return await _scrape_core(url, timeout, log_func, want_links=True)
+
+async def _scrape_core(url: str, timeout: int, log_func, want_links: bool) -> any:
     async def log(msg):
-        if log_func: 
-            await log_func(msg)
-        else:
-            print(msg)
+        if log_func: await log_func(msg)
+        else: print(msg)
 
     await log(f"[Scraper] Connecting to: {url}")
     
@@ -30,24 +36,27 @@ async def scrape_text_from_url(url: str, timeout: int = 15, log_func=None) -> st
                 
                 if "application/pdf" in content_type:
                     await log(f"[Scraper] 📄 PDF detected. Initiating secure stream...")
-                    return await _stream_and_process_pdf(response, log)
+                    text = await _stream_and_process_pdf(response, log)
+                    return (text, []) if want_links else text
                 
                 elif "text/html" in content_type or "text/plain" in content_type:
                     await log(f"[Scraper] 🌐 HTML text detected. Initiating secure stream...")
-                    return await _stream_and_process_html(response, log)
+                    return await _stream_and_process_html(response, log, want_links, base_url=str(response.url))
                     
                 else:
                     await log(f"[Scraper] ⚠️ Unsupported content type skipped: {content_type}")
-                    return ""
+                    return ("", []) if want_links else ""
                     
     except httpx.TimeoutException:
         await log(f"[Scraper] Warning: Timed out waiting for {url}")
-        return ""
+        return ("", []) if want_links else ""
     except Exception as e:
         await log(f"[Scraper] Failed to scrape {url}: {e}")
-        return ""
+        return ("", []) if want_links else ""
 
-async def _stream_and_process_html(response: httpx.Response, log_func) -> str:
+from urllib.parse import urljoin
+
+async def _stream_and_process_html(response: httpx.Response, log_func, want_links: bool = False, base_url: str = None) -> any:
     """Streams up to limits, truncates if over, parses HTML gracefully."""
     downloaded_bytes = bytearray()
     
@@ -61,6 +70,17 @@ async def _stream_and_process_html(response: httpx.Response, log_func) -> str:
     
     soup = BeautifulSoup(html_content, "html.parser")
     
+    links = []
+    if want_links and base_url:
+        for a in soup.find_all("a", href=True):
+            absolute_url = urljoin(base_url, a["href"])
+            # Remove fragments to avoid duplicate processing of the same page
+            absolute_url = absolute_url.split("#")[0]
+            if absolute_url.startswith("http"):
+                links.append(absolute_url)
+        # Deduplicate links
+        links = list(dict.fromkeys(links))
+
     # Advanced purging 
     for junk in soup(["script", "style", "nav", "footer", "header", "aside", "form", "noscript", "iframe"]):
         junk.decompose()
@@ -72,10 +92,10 @@ async def _stream_and_process_html(response: httpx.Response, log_func) -> str:
     # Very basic validation (e.g. Cloudflare captcha block check)
     if "Just a moment..." in clean_text and "Cloudflare" in html_content:
         await log_func("[Scraper] ⚠️ Blocked by Cloudflare.")
-        return ""
+        return ("", []) if want_links else ""
         
     await log_func(f"[Scraper] Successfully extracted {len(clean_text):,} characters from HTML.")
-    return clean_text
+    return (clean_text, links) if want_links else clean_text
 
 async def _stream_and_process_pdf(response: httpx.Response, log_func) -> str:
     """Streams large PDFs directly to a temporary file, then parses them with marker."""

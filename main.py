@@ -5,6 +5,8 @@ import asyncio
 import io
 import chromadb
 from agent.loop import run_autonomous_loop
+from agent.crawler import run_focused_crawler
+from agent.wiki_builder import generate_index_page
 from query import answer_question
 from config.settings import DISCORD_TOKEN, CHROMA_DB_PATH
 
@@ -43,6 +45,44 @@ async def topic_autocomplete(
 from agent.checkpoint import load_checkpoint, load_chain_checkpoint, save_chain_checkpoint, delete_chain_checkpoint, request_soft_stop
 from agent.planner import decompose_chain_prompt
 from storage.vectordb import VectorDB
+
+# --- Focused Crawler Command ---
+@bot.tree.command(name="crawl_site", description="Recursively crawls a single website to build a specialized knowledge base.")
+@app_commands.describe(
+    url="The starting URL of the website to crawl.",
+    topic="The collection name (database) to store the data in.",
+    max_pages="Maximum number of pages to ingest (Default: 20).",
+    max_depth="How deep to follow internal links (Default: 3)."
+)
+async def crawl_site(interaction: discord.Interaction, url: str, topic: str, max_pages: int = 20, max_depth: int = 3):
+    await interaction.response.send_message(f"### 🕷️ Site Crawler Initialized: {topic}\n> **Target:** <{url}>\n\n⚙️ **Calibrating Domain Shield...**")
+    
+    status_message = None
+    async def discord_logger(message: str, is_sub_step: bool = False):
+        nonlocal status_message
+        try:
+            if not is_sub_step:
+                status_message = await interaction.channel.send(f"> {message}")
+            elif status_message:
+                new_content = status_message.content + f"\n> ↳ {message}"
+                if len(new_content) > 1900:
+                    status_message = await interaction.channel.send(f"> ↳ {message} (continued...)")
+                else:
+                    await status_message.edit(content=new_content)
+        except Exception:
+            pass
+
+    try:
+        count = await run_focused_crawler(
+            base_url=url,
+            topic=topic,
+            max_pages=max_pages,
+            max_depth=max_depth,
+            log_func=discord_logger
+        )
+        await interaction.channel.send(f"✅ **Crawl Complete!** Successfully ingested {count} pages from the target domain into `{topic}`.")
+    except Exception as e:
+        await interaction.channel.send(f"❌ **Fatal Crawler Error:** {e}")
 
 # --- Slash Commands ---
 
