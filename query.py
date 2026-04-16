@@ -421,10 +421,11 @@ async def answer_question(topic: str, question: str, mode: str = "Balanced", sty
             f"USER QUESTION: {question}"
         )
 
-    # 4. Final Context Shield Check: Combine and ensure it fits the model
+    # Final Context Shield Check: Combine and ensure it fits the model
     system_prompt, user_prompt = fit_to_context_budget(system_prompt, user_prompt, MAX_CONTEXT_WORDS)
 
-    answer = await llm.generate_text(system_prompt, user_prompt, temperature=0.3, max_tokens=8192, timeout_override=600)
+    # Use default LLM_TIMEOUT from .env (no hardcoded override)
+    answer = await llm.generate_text(system_prompt, user_prompt, temperature=0.3, max_tokens=8192)
     
     # 5. End if Fast mode or max auto-loops hit
     if _current_auto_loop >= max_auto_loops:

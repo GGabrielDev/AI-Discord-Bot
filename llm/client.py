@@ -22,6 +22,9 @@ class LocalLLM:
         )
         self.model = LLM_MODEL_NAME
         self.default_max_tokens = LLM_MAX_TOKENS
+        
+        # Diagnostic logging to verify .env loading
+        print(f"[LLM] Client initialized. Model: {self.model} | Global Timeout: {LLM_TIMEOUT}s")
         # Running token counters for the current bot session
         self._total_prompt_tokens = 0
         self._total_completion_tokens = 0
