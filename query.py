@@ -7,8 +7,9 @@ from config.settings import LLM_CONTEXT_WINDOW
 from agent.checkpoint import check_soft_stop
 
 # Safety ceiling for context fed to the LLM during /ask synthesis.
-# Estimated at ~0.75 words per token, with 80% headroom for system prompt + generation.
-MAX_CONTEXT_WORDS = int(LLM_CONTEXT_WINDOW * 0.75 * 0.8)
+# Estimated at ~0.65 words per token (conservative for technical data), 
+# with 80% headroom for system prompt + generation.
+MAX_CONTEXT_WORDS = int(LLM_CONTEXT_WINDOW * 0.65 * 0.8)
 
 async def _expand_query(llm: LocalLLM, question: str, num_variations: int) -> list[str]:
     """Uses the LLM to generate semantic variations of the original question."""
