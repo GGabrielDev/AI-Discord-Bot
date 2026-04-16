@@ -12,6 +12,83 @@ MAX_WORDS_PER_CALL = 3000
 MAX_INPUT_WORDS = int(LLM_CONTEXT_WINDOW * 0.75 * 0.8)
 
 
+def chunk_text(text: str, target_size: int = 400, overlap_sentences: int = 2) -> list[str]:
+    """Semantic chunker: splits on paragraph boundaries with sentence-level overlap.
+    
+    1. Split on paragraph boundaries (double newline)
+    2. Merge small paragraphs with adjacent ones
+    3. Split oversized paragraphs at sentence boundaries
+    4. Add overlap — each chunk includes the last N sentences of the previous chunk
+    
+    Args:
+        text: The text to chunk
+        target_size: Target chunk size in words
+        overlap_sentences: Number of trailing sentences to carry into the next chunk
+    """
+    # Split into paragraphs
+    paragraphs = re.split(r'\n\s*\n', text.strip())
+    paragraphs = [p.strip() for p in paragraphs if p.strip()]
+    
+    # Split oversized paragraphs at sentence boundaries
+    sections = []
+    for para in paragraphs:
+        words = para.split()
+        if len(words) <= target_size:
+            sections.append(para)
+        else:
+            # Split at sentence boundaries
+            sentences = re.split(r'(?<=[.!?])\s+', para)
+            current = []
+            current_len = 0
+            for sent in sentences:
+                sent_len = len(sent.split())
+                if current_len + sent_len > target_size and current:
+                    sections.append(" ".join(current))
+                    current = []
+                    current_len = 0
+                current.append(sent)
+                current_len += sent_len
+            if current:
+                sections.append(" ".join(current))
+    
+    # Merge small sections with neighbors (< 80 words)
+    merged = []
+    buffer = ""
+    for section in sections:
+        if buffer:
+            combined = buffer + "\n\n" + section
+            if len(combined.split()) <= target_size:
+                buffer = combined
+                continue
+            else:
+                merged.append(buffer)
+                buffer = section
+        else:
+            buffer = section
+        
+        if len(buffer.split()) >= 80:
+            merged.append(buffer)
+            buffer = ""
+    if buffer:
+        merged.append(buffer)
+    
+    if not merged:
+        # Fallback: word-based split if nothing else works
+        words = text.split()
+        return [" ".join(words[i:i + target_size]) for i in range(0, len(words), target_size)]
+    
+    # Add overlap: carry trailing sentences from previous chunk into next
+    if overlap_sentences > 0 and len(merged) > 1:
+        overlapped = [merged[0]]
+        for i in range(1, len(merged)):
+            prev_sentences = re.split(r'(?<=[.!?])\s+', merged[i - 1])
+            overlap = prev_sentences[-overlap_sentences:] if len(prev_sentences) >= overlap_sentences else prev_sentences
+            overlapped.append(" ".join(overlap) + "\n\n" + merged[i])
+        return overlapped
+    
+    return merged
+
+
 def compress_raw_text(text: str) -> str:
     """Aggressively strips useless formatting and whitespace noise to compress raw text directly."""
     if not text:

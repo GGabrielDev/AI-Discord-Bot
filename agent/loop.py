@@ -19,7 +19,7 @@ import hashlib
 import time
 from llm.client import LocalLLM
 from agent.planner import generate_search_queries, evaluate_and_replan
-from agent.summarizer import summarize_page, compress_raw_text
+from agent.summarizer import summarize_page, compress_raw_text, chunk_text
 from agent.wiki_builder import store_article
 from agent.checkpoint import save_checkpoint, load_checkpoint, delete_checkpoint, check_soft_stop
 from tools.search import get_search_results
@@ -28,81 +28,6 @@ from storage.vectordb import VectorDB
 
 import re as re_module
 
-def chunk_text(text: str, target_size: int = 400, overlap_sentences: int = 2) -> list[str]:
-    """Semantic chunker: splits on paragraph boundaries with sentence-level overlap.
-    
-    1. Split on paragraph boundaries (double newline)
-    2. Merge small paragraphs with adjacent ones
-    3. Split oversized paragraphs at sentence boundaries
-    4. Add overlap — each chunk includes the last N sentences of the previous chunk
-    
-    Args:
-        text: The text to chunk
-        target_size: Target chunk size in words
-        overlap_sentences: Number of trailing sentences to carry into the next chunk
-    """
-    # Split into paragraphs
-    paragraphs = re_module.split(r'\n\s*\n', text.strip())
-    paragraphs = [p.strip() for p in paragraphs if p.strip()]
-    
-    # Split oversized paragraphs at sentence boundaries
-    sections = []
-    for para in paragraphs:
-        words = para.split()
-        if len(words) <= target_size:
-            sections.append(para)
-        else:
-            # Split at sentence boundaries
-            sentences = re_module.split(r'(?<=[.!?])\s+', para)
-            current = []
-            current_len = 0
-            for sent in sentences:
-                sent_len = len(sent.split())
-                if current_len + sent_len > target_size and current:
-                    sections.append(" ".join(current))
-                    current = []
-                    current_len = 0
-                current.append(sent)
-                current_len += sent_len
-            if current:
-                sections.append(" ".join(current))
-    
-    # Merge small sections with neighbors (< 80 words)
-    merged = []
-    buffer = ""
-    for section in sections:
-        if buffer:
-            combined = buffer + "\n\n" + section
-            if len(combined.split()) <= target_size:
-                buffer = combined
-                continue
-            else:
-                merged.append(buffer)
-                buffer = section
-        else:
-            buffer = section
-        
-        if len(buffer.split()) >= 80:
-            merged.append(buffer)
-            buffer = ""
-    if buffer:
-        merged.append(buffer)
-    
-    if not merged:
-        # Fallback: word-based split if nothing else works
-        words = text.split()
-        return [" ".join(words[i:i + target_size]) for i in range(0, len(words), target_size)]
-    
-    # Add overlap: carry trailing sentences from previous chunk into next
-    if overlap_sentences > 0 and len(merged) > 1:
-        overlapped = [merged[0]]
-        for i in range(1, len(merged)):
-            prev_sentences = re_module.split(r'(?<=[.!?])\s+', merged[i - 1])
-            overlap = prev_sentences[-overlap_sentences:] if len(prev_sentences) >= overlap_sentences else prev_sentences
-            overlapped.append(" ".join(overlap) + "\n\n" + merged[i])
-        return overlapped
-    
-    return merged
 
 def content_hash(text: str) -> str:
     """Generate a short hash of content to detect duplicates."""
@@ -258,7 +183,7 @@ async def run_autonomous_loop(subject, topic, max_iterations=3, depth=3, log_fun
             
             # === CHECKPOINT: Save state after replanning with new queries ===
             save_checkpoint(
-                subject=subject, collection_name=collection_name,
+                subject=subject, topic=topic,
                 max_iterations=max_iterations, depth=depth,
                 current_iteration=iteration + 1, current_query_index=0,
                 current_queries=current_queries,
