@@ -19,9 +19,10 @@ Discord (User Interface)
   │
   └── /ask  →  Multi-Query RAG Pipeline
         ├── Semantic Query Expansion
+        ├── Deep Semantic Internal Probing (SIP)
         ├── Vector Similarity Search
         ├── Context Budget Manager
-        └── Structured Markdown Reports
+        └── Structured Markdown Reports (Concise or Investigative)
 ```
 
 ## Features
@@ -49,11 +50,15 @@ Discord (User Interface)
   - **Thorough** — 5 queries, 60 chunks, Max 3 auto-research loops (~40s+)
   - **Omniscient** — Uncapped gap-seeking. Dynamically spawns autonomous web agent loops to fill its own knowledge gaps indefinitely until the question is perfectly answered or `/finish` is triggered.
 - **Iterative Draft Refining** — By feeding the LLM its previous incomplete drafts alongside brand new gap-filling chunks, the agent inherently bypasses the context window limits, generating ever-growing multi-page documents!
+- **Deep Semantic Internal Probing (SIP)** — Before hitting the web to fill a Knowledge Gap, the agent performs a massive multi-vector "Internal Brain Search" to verify if the answer is already hidden in existing raw data.
+- **Analyst Personas (Styles)** — Choose Between two distinct reporting styles:
+    - **Concise**: High-efficiency technical briefs.
+    - **Investigative**: Exhaustive, forensic-style deep-dives that explore contradictions and technical nuances.
 - **Dual-Ingestion Architecture** — Natively preserves massive compressed raw text blocks directly alongside the summarized chunks so granular letter-for-letter data is never lost.
 - **Native Translation** — Force reports into any language (Spanish, French, etc.) while automatically preserving mathematical symbology and proper nouns
 - **Context Budget Protection** — Automatically truncates assembled context to stay within the model's context window
 - **Structured Reports** — Outputs standardized Markdown with Executive Summary, Comprehensive Analysis, Citations, and Knowledge Gaps sections
-- **Discord Integration** — Large reports are packaged as downloadable `.md` file attachments
+- **Discord Integration** — Large reports are packaged as downloadable `.md` file attachments. Intermediate drafts are delivered during long recursive research to avoid data loss.
 
 ### 📚 Knowledge Base
 - **Dual Storage** — ChromaDB for semantic vector search + human-readable Markdown files on disk
@@ -168,14 +173,15 @@ The bot will autonomously:
 
 ### Querying Your Knowledge Base
 ```
-/ask topic:"solid state batteries" question:"What are the main electrolyte materials?" mode:Thorough
+/ask topic:"solid state batteries" question:"What are the main electrolyte materials?" mode:Thorough style:Investigative
 ```
 The bot will:
 1. Generate semantic variations of your question
-2. Run parallel vector searches across ChromaDB
-3. Deduplicate and prioritize results
-4. Synthesize a comprehensive Markdown report
-5. Deliver it as a downloadable `.md` file attachment
+2. Run **Deep Semantic Internal Probing (SIP)** to solve gaps using only local data first
+3. Run parallel vector searches across ChromaDB
+4. Deduplicate and prioritize results (Summaries vs Raw chunks)
+5. Synthesize a comprehensive Markdown report based on your selected **Analyst Persona**
+6. Deliver it as a downloadable `.md` file attachment (with intermediate drafts if gaps are found)
 
 ---
 
