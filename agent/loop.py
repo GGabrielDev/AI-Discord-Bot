@@ -110,7 +110,43 @@ async def run_autonomous_loop(subject, topic, max_iterations=3, depth=3, log_fun
             
             for res in results:
                 url = res["url"]
+                # 1. Session-level safeguard (Prevent re-processing in same recursive loop)
                 if url in seen_urls: continue
+                
+                # 2. Persistent Cross-Session Memory Check
+                if db.has_source(url):
+                    await report(f"📦 **Cache Hit:** Surgical probe of known source <{url}>", is_sub_step=False)
+                    # Pull chunks for this specific source
+                    cached_chunks = db.get_chunks_by_source(url)
+                    
+                    # Surgical Evaluation: Can we solve the current query with what we already have for this URL?
+                    system_prompt = (
+                        "You are an internal data evaluator. You are given a RESEARCH QUERY and chunks from a specific website we have previously analyzed.\n\n"
+                        "Task: Determine if the answer to the query exists in these specific chunks.\n"
+                        "- If YES, provide the technical answer and set 'found' to true.\n"
+                        "- If NO, set 'found' to false.\n\n"
+                        "Return ONLY JSON: {\"found\": bool, \"answer\": \"string\"}"
+                    )
+                    # Context limit for surgical probe: 100 chunks max (prevent overflow)
+                    probe_context = "\n\n".join([d for d, m in cached_chunks[:100]])
+                    user_prompt = f"QUERY: {query}\n\nCACHED DATA FROM {url}:\n{probe_context}"
+                    
+                    probe_result = await llm.generate_json(system_prompt, user_prompt)
+                    
+                    if probe_result.get("found"):
+                        await report(f"✅ **Surgical SIP Success:** Answer extracted from cache.", is_sub_step=True)
+                        seen_urls.add(url)
+                        # We still save the checkpoint so we don't re-probe this URL if we crash
+                        save_checkpoint(
+                            subject=subject, topic=topic,
+                            max_iterations=max_iterations, depth=depth,
+                            current_iteration=iteration, current_query_index=q_idx,
+                            current_queries=current_queries,
+                            seen_urls=seen_urls, seen_hashes=seen_hashes
+                        )
+                        continue
+                    else:
+                        await report(f"🔍 *Cache insufficient for current query. Proceeding to fresh scrape...*", is_sub_step=True)
                 
                 await report(f"🌐 **Processing:** <{url}>", is_sub_step=False)
                 

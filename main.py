@@ -227,7 +227,8 @@ async def chain_research(interaction: discord.Interaction, prompt: str, topic: s
     topic="Select an existing research project.",
     question="What do you want to know?",
     mode="Select internal analysis strategy (Fast/Balanced/Thorough).",
-    language="Optional: Force output language (e.g. Spanish, French). Defaults to English."
+    language="Optional: Force output language (e.g. Spanish, French). Defaults to English.",
+    resume_from="Optional: Attach a previous .md report to resume research and fill its gaps."
 )
 @app_commands.autocomplete(topic=topic_autocomplete)
 @app_commands.choices(mode=[
@@ -240,7 +241,11 @@ async def chain_research(interaction: discord.Interaction, prompt: str, topic: s
     app_commands.Choice(name="Concise (Direct, efficient summaries)", value="Concise"),
     app_commands.Choice(name="Investigative (Exhaustive deep-dive, forensic analysis)", value="Investigative")
 ])
-async def ask(interaction: discord.Interaction, topic: str, question: str, mode: app_commands.Choice[str] = None, style: app_commands.Choice[str] = None, language: str = "English"):
+async def ask(interaction: discord.Interaction, topic: str, question: str, 
+            mode: app_commands.Choice[str] = None, 
+            style: app_commands.Choice[str] = None, 
+            language: str = "English",
+            resume_from: discord.Attachment = None):
     # Acknowledge the command natively - Truncate long questions to stay within Discord's 2000 char limit
     safe_q = (question[:1500] + '...') if len(question) > 1500 else question
     await interaction.response.send_message(f"### 🧠 Intelligence Report: {topic}\n> **Q:** {safe_q}\n\n⚙️ **Initializing Agentic Analysis...**")
@@ -272,6 +277,23 @@ async def ask(interaction: discord.Interaction, topic: str, question: str, mode:
         except Exception:
             pass
     
+    # --- Resume Logic ---
+    resume_draft = None
+    if resume_from:
+        if not resume_from.filename.endswith(".md"):
+            await interaction.channel.send("❌ **Error:** `resume_from` must be a `.md` Markdown file.")
+            return
+        
+        try:
+            await discord_status_logger(f"📥 **Downloading report for resumption:** `{resume_from.filename}`...")
+            resume_bytes = await resume_from.read()
+            resume_draft = resume_bytes.decode('utf-8')
+            # If the user is resuming, we default to a deeper mode if possible
+            if not mode: mode_val = "Omniscient"
+        except Exception as e:
+            await interaction.channel.send(f"❌ **Failed to read report:** {e}")
+            return
+
     # 1. Run the massive multi-query pipeline (this will take time)
     answer = await answer_question(
         topic, 
@@ -280,7 +302,8 @@ async def ask(interaction: discord.Interaction, topic: str, question: str, mode:
         style=style_val,
         log_func=discord_status_logger, 
         draft_callback=handle_draft, 
-        language=language
+        language=language,
+        _draft=resume_draft # Pass the resumed text as starting draft
     )
     
     # 2. Package the response as a downloadable Markdown file

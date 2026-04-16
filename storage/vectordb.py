@@ -56,6 +56,32 @@ class VectorDB:
         )
         print(f"[VectorDB] Stored {len(chunks)} {chunk_type} chunks from {source_url}")
 
+    def has_source(self, source_url: str) -> bool:
+        """Checks if any information from this URL already exists in the collection."""
+        try:
+            results = self.collection.get(
+                where={"source": source_url},
+                limit=1,
+                include=[] # We only care if it exists
+            )
+            return len(results['ids']) > 0
+        except Exception:
+            return False
+
+    def get_chunks_by_source(self, source_url: str) -> list[tuple[str, dict]]:
+        """Retrieves all chunks and metadata associated with a specific URL."""
+        try:
+            results = self.collection.get(
+                where={"source": source_url},
+                include=["documents", "metadatas"]
+            )
+            if results and results['documents']:
+                return list(zip(results['documents'], results['metadatas']))
+            return []
+        except Exception as e:
+            print(f"[VectorDB] Error retrieving source {source_url}: {e}")
+            return []
+
     def search(self, query: str, n_results: int = 5, chunk_type: str = None):
         """Searches the database for the most relevant text chunks.
         

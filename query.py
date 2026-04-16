@@ -235,10 +235,7 @@ async def answer_question(topic: str, question: str, mode: str = "Balanced", sty
     mode_limits = {"Fast": 0, "Balanced": 1, "Thorough": 3, "Omniscient": 999}
     max_auto_loops = mode_limits.get(mode, 1)
     
-    # 1. Fetch chunks or use just a tight cluster if Refining Draft
-    num_queries = 1 if mode == "Fast" else (5 if mode in ["Thorough", "Omniscient"] else 3)
-    chunk_budget = 10 if mode == "Fast" else (60 if mode in ["Thorough", "Omniscient"] else 30)
-    
+    # Global logging helper for this session
     async def log(msg: str, is_sub_step: bool = False):
         print(msg)
         if log_func:
@@ -246,6 +243,55 @@ async def answer_question(topic: str, question: str, mode: str = "Balanced", sty
         else:
             print(f"[Query] {msg}")
 
+    # --- Resume Shortcut ---
+    # If a draft is provided at the start, skip redundant broad searches 
+    # and jump straight to gap extraction.
+    if _draft and _current_auto_loop == 0:
+        await log("📦 **Resuming from provided report.** Parsing knowledge gaps...")
+        gap_queries = await extract_gap_queries(llm, _draft)
+        if gap_queries:
+            await log(f"🎯 **Identified {len(gap_queries)} Gaps in Resumed Report:** {', '.join(gap_queries)}", is_sub_step=True)
+            # Jump straight to Phase 6 (Re-research)
+            # We recreate the loc_log closure here for consistency
+            async def loc_log(m, is_sub_step=False):
+                print(m)
+                if log_func: await log_func(m, is_sub_step)
+            
+            # Start loop
+            for idx, gap_query in enumerate(gap_queries):
+                if check_soft_stop(): break
+                await loc_log(f"🔎 *Targeting Gap {idx+1}/{len(gap_queries)}:* `{gap_query}`")
+                sip_answer, sip_sources, is_resolved = await deep_internal_probe(db, llm, gap_query, mode, log_func=log_func)
+                
+                sip_context = ""
+                if is_resolved:
+                    sip_context = f"INTERNAL CACHE DATA FOR '{gap_query}':\n{sip_answer}"
+                    await loc_log(f"✅ **SIP MATCH:** Integrated from internal cache.", is_sub_step=True)
+                else:
+                    await loc_log(f"❌ *Not found internally. Launching web agent...*", is_sub_step=True)
+                    await run_autonomous_loop(gap_query, topic, max_iterations=1, depth=3, log_func=log_func)
+                
+                # Recursive call to update the draft with info from this gap
+                _draft = await answer_question(
+                    topic=topic,
+                    question=question,
+                    mode=mode, 
+                    style=style,
+                    log_func=log_func,
+                    draft_callback=draft_callback,
+                    language=language,
+                    _current_auto_loop=_current_auto_loop + 1,
+                    _draft=_draft, # Update the resumable draft
+                    _extra_context=sip_context if is_resolved else ""
+                )
+            return _draft
+        else:
+            await log("💡 **Resumed report appears complete.** No new gaps identified.")
+            # If no gaps, just proceed to a final synthesis to ensure persona formatting is applied
+            # By letting it fall through, the code below will run Phase 1-4.
+            # Actually, if we're resuming a finished report, maybe we just return it.
+            # But let's let it run once to be safe.
+    
     # 1. Parameter Matrix Mapping
     if mode == "Fast":
         num_variations = 0

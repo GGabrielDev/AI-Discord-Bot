@@ -58,6 +58,8 @@ Discord (User Interface)
   - **Omniscient** — Uncapped gap-seeking. Dynamically spawns autonomous web agent loops to fill its own knowledge gaps indefinitely until the question is perfectly answered or `/finish` is triggered.
 - **Iterative Draft Refining** — By feeding the LLM its previous incomplete drafts alongside brand new gap-filling chunks, the agent inherently bypasses the context window limits, generating ever-growing multi-page documents!
 - **Deep Semantic Internal Probing (SIP)** — Before hitting the web to fill a Knowledge Gap, the agent performs a massive multi-vector "Internal Brain Search" to verify if the answer is already hidden in existing raw data.
+- **Cross-Session URL Memory** — The agent recognizes URLs it has already processed in previous sessions. Instead of re-scraping, it performs a **Virtual Scrape**: surgically probing its existing database to extract answers without consuming new web search or summarization tokens.
+- **Disconnected Persistence (Resume)** — Upload a previous `.md` report to the `/ask` command using the `resume_from` parameter. The agent will parse the report, extract the remaining Knowledge Gaps, and automatically resume recursive research to fill them.
 - **Analyst Personas (Styles)** — Choose Between two distinct reporting styles:
     - **Concise**: High-efficiency technical briefs.
     - **Investigative**: Exhaustive, forensic-style deep-dives that explore contradictions and technical nuances.
@@ -80,6 +82,16 @@ When a research session is interrupted (power outage, network failure, OOM crash
 - Users see a clear Discord notification: *"⚡ Resuming interrupted research..."*
 - On successful completion, the checkpoint is automatically cleaned up
 - **Chain Checkpoints** — For `/chain_research`, the bot securely hashes the `prompt` to remember which sub-topics have been fully researched
+
+### 🧹 Database Maintenance
+Keep your vector database lean and free of redundant data:
+- **Duplicate Pruning** — Use the included maintenance utility to remove old or redundant scrapes of the same URL.
+- **Run the cleaner:**
+  ```bash
+  PYTHONPATH=. ./bin/python tools/clean_db.py --topic radio_research --execute
+  ```
+
+---
 
 
 ### 🛡️ Hardware-Aware Optimizations
