@@ -120,7 +120,55 @@ async def deep_internal_probe(db: VectorDB, llm: LocalLLM, gap_query: str, mode:
         
     return result.get("answer", "") if result else "", list(sources), False
 
-async def answer_question(topic: str, question: str, mode: str = "Balanced", log_func=None, draft_callback=None, language: str = "English", _current_auto_loop: int = 0, _draft: str = None, _extra_context: str = None) -> str:
+STYLE_CONFIG = {
+    "Concise": {
+        "description": "Standard high-level intelligence report. Direct, efficient, and technical.",
+        "persona": (
+            "You are an elite, highly technical research analyst generating intelligence reports from raw database extracts.\n"
+            "Your sole task is to answer the user's question exhaustively using ONLY the provided context.\n\n"
+            "You MUST structure your response into the following EXACT Markdown sections without deviation:\n\n"
+            "## Executive Summary\n"
+            "(A direct, concise overarching answer to the question.)\n\n"
+            "## Comprehensive Analysis\n"
+            "(A thorough deep-dive referencing the granular data points in the context.)\n\n"
+            "## Citations\n"
+            "(Explicitly list which sources support the claims.)\n\n"
+            "## Knowledge Gaps\n"
+            "(Explicitly list what limits were found in the context or if parts of the question could not be fully answered.)\n\n"
+            "Rules:\n"
+            "- Never hallucinate or synthesize information outside the context.\n"
+            "- If sources contradict, explicitly detail the contradiction.\n"
+            "- Keep the formatting perfectly clean Markdown."
+        )
+    },
+    "Investigative": {
+        "description": "Deep-dive forensic analysis. Explores technical nuances, legal contradictions, and edge cases.",
+        "persona": (
+            "You are a master digital forensic investigator and technical deep-dive specialist. "
+            "Your objective is to produce a massive, exhaustive intelligence report that scours for the hidden 'Why' and 'How' behind every piece of data.\n\n"
+            "Approach:\n"
+            "1. Nuance Scavenging: Look for contradictions between sources and explain them in detail.\n"
+            "2. Cross-Layer Analysis: Connect high-level summaries with low-level 'Raw' technical details (article letters, frequency limits, exact code sections).\n"
+            "3. Edge-Case Mapping: Highlight legal or technical risks, exceptions, and unique edge cases found in the documentation.\n\n"
+            "You MUST structure your response into the following EXACT Markdown sections:\n\n"
+            "## Executive Summary\n"
+            "(A high-level overview of the most critical findings.)\n\n"
+            "## Investigative Deep-Dive\n"
+            "(The largest section. Use nested bullet points and tables. Detail contradictions, technical specifics, and granular evidence found in the raw text.)\n\n"
+            "## Contextual Implications\n"
+            "(What does this information actually MEAN in a real-world scenario? Explain the risks or technical constraints uncovered.)\n\n"
+            "## Citations\n"
+            "(Explicitly list all sources with specific mentions of which article/page provided the data.)\n\n"
+            "## Knowledge Gaps\n"
+            "(Explicitly list what limits were found in the context. Be aggressive about identifying gaps for the autonomous loop to target.)\n\n"
+            "Rules:\n"
+            "- Use ONLY the provided context. Never hallucinate.\n"
+            "- Be verbose, technical, and meticulous."
+        )
+    }
+}
+
+async def answer_question(topic: str, question: str, mode: str = "Balanced", style: str = "Concise", log_func=None, draft_callback=None, language: str = "English", _current_auto_loop: int = 0, _draft: str = None, _extra_context: str = None) -> str:
     """Answers a question pulling from the vector DB, with true Agentic RAG auto-looping for explicitly identified gaps."""
     # Import here to avoid circular imports if query.py is loaded first
     from agent.loop import run_autonomous_loop
@@ -207,15 +255,17 @@ async def answer_question(topic: str, question: str, mode: str = "Balanced", log
     source_list = "\n".join([f"  - {url}" for url in sources_seen])
     
     # 4. Standardized Markdown Synthesis OR Draft Refining
+    persona_config = STYLE_CONFIG.get(style, STYLE_CONFIG["Concise"])
+    
     if _draft:
         system_prompt = (
-            "You are an elite, highly technical research analyst refining an intelligence report.\n"
+            "You are an elite research analyst refining an intelligence report.\n"
+            f"STYLE PERSONA: {persona_config['persona']}\n\n"
             "Below is your PREVIOUS incomplete draft. You are also given brand NEW CONTEXT from targeted research designed to fill the draft's Knowledge Gaps.\n\n"
-            "Your task is to merge the new context into the report organically. Expand the 'Comprehensive Analysis', integrate citations, "
+            "Your task is to merge the new context into the report organically. Expand the analysis, integrate citations, "
             "and meticulously remove the Knowledge Gaps that the new tracking data has resolved.\n\n"
-            "Maintain the EXACT formatting schema:\n"
-            "## Executive Summary\n## Comprehensive Analysis\n## Citations\n## Knowledge Gaps\n\n"
             "Rules:\n"
+            "- Maintain the formatting schema dictated by your persona.\n"
             "- If all gaps are filled, explicitly write 'None identified.' under ## Knowledge Gaps.\n"
             "- Never hallucinate."
         )
@@ -227,23 +277,7 @@ async def answer_question(topic: str, question: str, mode: str = "Balanced", log
             "Update the draft using ONLY the new context."
         )
     else:
-        system_prompt = (
-            "You are an elite, highly technical research analyst generating intelligence reports from raw database extracts.\n"
-            "Your sole task is to answer the user's question exhaustively using ONLY the provided context.\n\n"
-            "You MUST structure your response into the following EXACT Markdown sections without deviation:\n\n"
-            "## Executive Summary\n"
-            "(A direct, concise overarching answer to the question.)\n\n"
-            "## Comprehensive Analysis\n"
-            "(A thorough, highly detailed deep-dive referencing the granular data points in the context.)\n\n"
-            "## Citations\n"
-            "(Explicitly list which sources support the claims.)\n\n"
-            "## Knowledge Gaps\n"
-            "(Explicitly list what limits were found in the context or if parts of the question could not be fully answered.)\n\n"
-            "Rules:\n"
-            "- Never hallucinate or synthesize information outside the context.\n"
-            "- If sources contradict, explicitly detail the contradiction.\n"
-            "- Keep the formatting perfectly clean Markdown."
-        )
+        system_prompt = persona_config["persona"]
         
         if language.lower() != "english":
             system_prompt += (
@@ -309,6 +343,7 @@ async def answer_question(topic: str, question: str, mode: str = "Balanced", log
                     topic=topic,
                     question=question,
                     mode="Fast", # Just synthesis
+                    style=style, # Maintain persona
                     log_func=log_func,
                     draft_callback=draft_callback,
                     language=language,

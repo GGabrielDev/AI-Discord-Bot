@@ -197,12 +197,17 @@ async def chain_research(interaction: discord.Interaction, prompt: str, topic: s
     app_commands.Choice(name="Thorough (5 queries, Max 3 auto-loops, ~40s+)", value="Thorough"),
     app_commands.Choice(name="Omniscient (Uncapped gap-seeking, auto-loops until perfect)", value="Omniscient")
 ])
-async def ask(interaction: discord.Interaction, topic: str, question: str, mode: app_commands.Choice[str] = None, language: str = "English"):
+@app_commands.choices(style=[
+    app_commands.Choice(name="Concise (Direct, efficient summaries)", value="Concise"),
+    app_commands.Choice(name="Investigative (Exhaustive deep-dive, forensic analysis)", value="Investigative")
+])
+async def ask(interaction: discord.Interaction, topic: str, question: str, mode: app_commands.Choice[str] = None, style: app_commands.Choice[str] = None, language: str = "English"):
     # Acknowledge the command natively
     await interaction.response.send_message(f"### 🧠 Intelligence Report: {topic}\n> **Q:** {question}\n\n⚙️ **Initializing Agentic Analysis...**")
     
     # Extract string from choice, default to Balanced
     mode_val = mode.value if mode else "Balanced"
+    style_val = style.value if style else "Concise"
     
     status_message = None
     async def discord_status_logger(message: str, is_sub_step: bool = False):
@@ -232,6 +237,7 @@ async def ask(interaction: discord.Interaction, topic: str, question: str, mode:
         topic, 
         question, 
         mode=mode_val, 
+        style=style_val,
         log_func=discord_status_logger, 
         draft_callback=handle_draft, 
         language=language
