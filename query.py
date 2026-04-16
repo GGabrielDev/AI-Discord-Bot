@@ -470,19 +470,28 @@ async def answer_question(topic: str, question: str, mode: str = "Balanced", sty
     # Final Context Shield Check: Combine and ensure it fits the model
     system_prompt, user_prompt = fit_to_context_budget(system_prompt, user_prompt, MAX_CONTEXT_WORDS)
 
+    # Use English for all internal synthesis to maintain fidelity
+    internal_language = "English"
+    if language.lower() != "english":
+        # Only apply target language instructions if this is the FINAL iteration
+        # (No gaps remaining OR soft stop OR loop limit)
+        # We check this condition later to see if we need a final translation pass.
+        pass
+
     # Use default LLM_TIMEOUT from .env (no hardcoded override)
     answer = await llm.generate_text(system_prompt, user_prompt, temperature=0.3, max_tokens=8192)
     
     # 5. End if Fast mode or max auto-loops hit
-    if _current_auto_loop >= max_auto_loops:
-        return answer
+    is_interrupted = check_soft_stop()
+    if _current_auto_loop >= max_auto_loops or is_interrupted:
+        if is_interrupted:
+            await log("🛑 **Soft Stop Acknowledged:** Halting Agentic gaps auto-loop early.")
         
-    # Check Soft Stop
-    if check_soft_stop():
-        async def loc_log(m):
-            print(m)
-            if log_func: await log_func(m)
-        await loc_log("🛑 **Soft Stop Acknowledged:** Halting Agentic gaps auto-loop early. Returning final draft.")
+        # --- Task 17: Dual Output Logic ---
+        # If this is the TOP-LEVEL call (loop 0), return the dual-language dict.
+        # If it's a recursive call, return the EN string for continued refinement.
+        if _current_auto_loop == 0:
+            return await finalize_dual_report(llm, answer, language, mode, is_interrupted)
         return answer
         
     # 6. Extract Gaps and Agentic RAG Re-research
@@ -560,6 +569,30 @@ async def answer_question(topic: str, question: str, mode: str = "Balanced", sty
         )
     
     return answer
+
+async def finalize_dual_report(llm: LocalLLM, english_draft: str, target_language: str, mode: str, is_interrupted: bool) -> dict:
+    """Performs the final translation pass and packages both EN and Translated versions."""
+    if target_language.lower() == "english":
+        return {"english": english_draft, "translated": None}
+
+    # User's Interruption Logic:
+    # - Omniscient: Always translate.
+    # - Balanced/Thorough + Interrupted: User originally said return EN, then said "I want both".
+    # We will provide both.
+    
+    print(f"[Query] Performing final translation pass to {target_language}...")
+    system_prompt = (
+        f"You are a professional translator and research analyst. "
+        f"Translate the following HIGH-FIDELITY technical report into {target_language.capitalize()}.\n\n"
+        "Guidelines:\n"
+        "- Maintain all Markdown formatting, charts, and structure.\n"
+        "- Preserve proper nouns, product names, and mathematical symbology precisely.\n"
+        "- Use professional, formal technical terminology."
+    )
+    user_prompt = f"REPORT TO TRANSLATE:\n{english_draft}"
+    
+    translated = await llm.generate_text(system_prompt, user_prompt, temperature=0.1, max_tokens=8192)
+    return {"english": english_draft, "translated": translated}
 
 def main():
     parser = argparse.ArgumentParser(description="Query your local research database via CLI.")

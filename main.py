@@ -145,6 +145,9 @@ async def research(interaction: discord.Interaction, subject: str, iterations: i
             
     except Exception as e:
         await interaction.channel.send(f"🚨 **CRITICAL SYSTEM ERROR:** ```{e}```")
+    finally:
+        from agent.checkpoint import clear_soft_stop
+        clear_soft_stop()
 
 @bot.tree.command(name="finish", description="Soft-Stop: Gracefully wind down all running researches and chains after current iterations.")
 async def finish(interaction: discord.Interaction):
@@ -217,6 +220,9 @@ async def chain_research(interaction: discord.Interaction, prompt: str, topic: s
         except Exception as e:
             await interaction.channel.send(f"🚨 **CHAIN FAILED on `{sub_topic}`:** ```{e}```")
             return # Stop the chain if a sub-loop critically fails
+        finally:
+            from agent.checkpoint import clear_soft_stop
+            clear_soft_stop()
             
     # Chain complete
     delete_chain_checkpoint(prompt)
@@ -294,37 +300,48 @@ async def ask(interaction: discord.Interaction, topic: str, question: str,
             await interaction.channel.send(f"❌ **Failed to read report:** {e}")
             return
 
-    # 1. Run the massive multi-query pipeline (this will take time)
-    answer = await answer_question(
-        topic, 
-        question, 
-        mode=mode_val, 
-        style=style_val,
-        log_func=discord_status_logger, 
-        draft_callback=handle_draft, 
-        language=language,
-        _draft=resume_draft # Pass the resumed text as starting draft
-    )
-    
-    # 2. Package the response as a downloadable Markdown file
-    markdown_bytes = io.BytesIO(answer.encode('utf-8'))
-    file = discord.File(fp=markdown_bytes, filename=f"Report_{topic}.md")
-    
-    try:
-        await interaction.edit_original_response(
-            content=f"### 🧠 Intelligence Report: {topic}\n> **Q:** {safe_q}\n\n✅ Analysis Complete. Generated report attached below.",
-            attachments=[file]
+        answer_data = await answer_question(
+            topic, 
+            question, 
+            mode=mode_val, 
+            style=style_val,
+            log_func=discord_status_logger, 
+            draft_callback=handle_draft, 
+            language=language,
+            _draft=resume_draft 
         )
-    except discord.errors.HTTPException:
-        # Token expired (took heavily over 15 minutes). The previous upload attempt exhausted the BytesIO stream.
-        # We MUST seek(0) and rebuild the discord.File to prevent uploading a 0-byte (NaN KB) empty file!
-        markdown_bytes.seek(0)
-        fallback_file = discord.File(fp=markdown_bytes, filename=f"Report_{topic}.md")
         
-        await interaction.channel.send(
-            content=f"<@{interaction.user.id}> ### 🧠 Intelligence Report: {topic}\n> **Q:** {safe_q}\n\n✅ Analysis Complete. Generated report attached below.",
-            file=fallback_file
-        )
+        # 2. Package the response (Dual File Delivery)
+        files = []
+        
+        # English Version (Always present)
+        en_text = answer_data["english"]
+        en_bytes = io.BytesIO(en_text.encode('utf-8'))
+        files.append(discord.File(fp=en_bytes, filename=f"Report_{topic}_EN.md"))
+        
+        # Translated Version (If applicable)
+        if answer_data.get("translated"):
+            tr_text = answer_data["translated"]
+            tr_bytes = io.BytesIO(tr_text.encode('utf-8'))
+            files.append(discord.File(fp=tr_bytes, filename=f"Report_{topic}_{language.upper()}.md"))
+        
+        try:
+            await interaction.edit_original_response(
+                content=f"### 🧠 Intelligence Report: {topic}\n> **Q:** {safe_q}\n\n✅ Analysis Complete. Generated reports attached below.",
+                attachments=files
+            )
+        except discord.errors.HTTPException:
+            # Token expired (took heavily over 15 minutes). Send as a new message.
+            await interaction.channel.send(
+                content=f"<@{interaction.user.id}> ### 🧠 Intelligence Report: {topic}\n> **Q:** {safe_q}\n\n✅ Analysis Complete. Generated reports attached below.",
+                files=files
+            )
+            
+    except Exception as e:
+        await interaction.channel.send(f"🚨 **CRITICAL SYSTEM ERROR:** ```{e}```")
+    finally:
+        from agent.checkpoint import clear_soft_stop
+        clear_soft_stop()
 
 # --- Sync Command (Admin only) ---
 @bot.command()

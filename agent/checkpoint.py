@@ -27,12 +27,19 @@ def request_soft_stop():
     print("[Checkpoint] 🛑 Soft stop requested by user.")
 
 def check_soft_stop() -> bool:
-    """Checks if a soft stop was requested. If so, consumes the flag and returns True."""
+    """Checks if a soft stop was requested. Does NOT consume the flag."""
     if os.path.exists(SOFT_STOP_FLAG):
-        os.remove(SOFT_STOP_FLAG)
-        print("[Checkpoint] 🛑 Soft stop flag detected and consumed. Wrapping up iteration...")
         return True
     return False
+
+def clear_soft_stop():
+    """Manually removes the soft stop flag after a command is finished or aborted."""
+    if os.path.exists(SOFT_STOP_FLAG):
+        try:
+            os.remove(SOFT_STOP_FLAG)
+            print("[Checkpoint] 🛑 Soft stop flag cleared for next session.")
+        except Exception as e:
+            print(f"[Checkpoint] ⚠️ Error clearing soft stop flag: {e}")
 
 
 def _checkpoint_path(topic: str) -> str:
