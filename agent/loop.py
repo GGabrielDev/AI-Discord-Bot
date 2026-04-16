@@ -21,7 +21,7 @@ from llm.client import LocalLLM
 from agent.planner import generate_search_queries, evaluate_and_replan
 from agent.summarizer import summarize_page, compress_raw_text, chunk_text
 from config.settings import LLM_MODEL_NAME, SAFE_WORD_BUDGET
-from agent.wiki_builder import store_article, build_topic_wiki
+from agent.wiki_builder import store_article
 from agent.checkpoint import save_checkpoint, load_checkpoint, delete_checkpoint, check_soft_stop
 from tools.search import get_search_results
 from tools.scraper import scrape_text_from_url
