@@ -97,35 +97,60 @@ async def deep_internal_probe(db: VectorDB, llm: LocalLLM, gap_query: str, mode:
     if mode == "Fast":
         return "", [], False
         
-    num_probes = 5 if mode in ["Thorough", "Omniscient"] else 3
-    chunks_per_probe = 20 if mode in ["Thorough", "Omniscient"] else 12
+    # SIP v2 Unified Greed Tiering
+    if mode in ["Thorough", "Omniscient"]:
+        num_probes = 7
+        scout_depth = 30
+        scavenge_depth = 15
+    else: # Balanced
+        num_probes = 4
+        scout_depth = 20
+        scavenge_depth = 10
     
     async def log(m):
         if log_func: await log_func(m, True)
         
-    await log(f"🧪 **SIP Probe initiated:** Decomposing `{gap_query}` into semantic vectors...")
+    await log(f"🧪 **SIP Probe (v2) initiated:** Exhaustively mining local data before web fallback...")
     
-    # 1. Generate deep probes
+    # 1. Internal Scout (Summaries)
     probe_queries = await _expand_query(llm, gap_query, num_probes - 1)
     
-    all_results = []
+    scout_results = []
     for q in probe_queries:
-        res = db.search_with_metadata(q, n_results=chunks_per_probe)
-        if res: all_results.extend(res)
+        res = db.search_with_metadata(q, n_results=scout_depth, where={"chunk_type": "summary"})
+        if res: scout_results.extend(res)
         
-    if not all_results:
-        return "", [], False
-        
-    # 2. Deduplicate and focus on target info
+    # Identification of top sources for Internal Scavenge
+    source_stats = {}
+    for _, meta in scout_results:
+        src = meta.get("source")
+        if src: source_stats[src] = source_stats.get(src, 0) + 1
+    
+    top_sources = sorted(source_stats.keys(), key=lambda x: source_stats[x], reverse=True)[:5]
+    
+    # 2. Internal Scavenge (Raw Data from top sources)
+    scavenge_results = []
+    for src in top_sources:
+        res = db.search_with_metadata(gap_query, n_results=scavenge_depth, where={"source": src, "chunk_type": "raw"})
+        if res: scavenge_results.extend(res)
+
+    # 3. Fallback: General internal search if scout found nothing
+    if not scout_results and not scavenge_results:
+        for q in probe_queries:
+            res = db.search_with_metadata(q, n_results=scout_depth)
+            if res: scavenge_results.extend(res)
+
+    # Deduplicate and stay within 200-chunk hard cap
     unique_knowledge = {}
     sources = set()
-    for doc, meta in all_results:
+    for doc, meta in (scout_results + scavenge_results):
         chunk_hash = hash(doc[:150])
         if chunk_hash not in unique_knowledge:
             unique_knowledge[chunk_hash] = doc
             sources.add(meta.get("source", "unknown"))
+        if len(unique_knowledge) >= 200: break # Hard Cap
             
-    context = "\n\n".join(list(unique_knowledge.values())[:30]) # Limit to ~30 best chunks for probe analysis
+    context = "\n\n".join(list(unique_knowledge.values()))
     
     # 3. LLM Evaluator: Can we solve this now?
     system_prompt = (
@@ -238,6 +263,16 @@ async def answer_question(topic: str, question: str, mode: str = "Balanced", sty
         num_variations = 2
         scout_chunks = 25
         scavenge_count = 3 # Scavenge top 3 sources
+
+    # --- Refinement Boost (1.5x) ---
+    # If we are refining a draft, we know we just added data specifically for this topic.
+    # We boost retrieval to ensure that data is captured.
+    if _draft:
+        scout_chunks = int(scout_chunks * 1.5)
+        scavenge_count = int(scavenge_count * 1.5)
+        # Cap at 200 chunks total to stay safe for context window
+        if scout_chunks > 150: scout_chunks = 150
+        if scavenge_count > 12: scavenge_count = 12
 
     await log(f"⏳ **Phase 1: Multi-Stage Scout initiated...** (Variations: {num_variations + 1})")
     search_queries = await _expand_query(llm, question, num_variations)
@@ -389,8 +424,7 @@ async def answer_question(topic: str, question: str, mode: str = "Balanced", sty
     # 4. Final Context Shield Check: Combine and ensure it fits the model
     system_prompt, user_prompt = fit_to_context_budget(system_prompt, user_prompt, MAX_CONTEXT_WORDS)
 
-    # Increased timeout to 30 minutes (1800s) for massive context processing on local hardware
-    answer = await llm.generate_text(system_prompt, user_prompt, temperature=0.3, max_tokens=8192, timeout_override=1800)
+    answer = await llm.generate_text(system_prompt, user_prompt, temperature=0.3, max_tokens=8192, timeout_override=600)
     
     # 5. End if Fast mode or max auto-loops hit
     if _current_auto_loop >= max_auto_loops:
@@ -439,7 +473,7 @@ async def answer_question(topic: str, question: str, mode: str = "Balanced", sty
                 answer = await answer_question(
                     topic=topic,
                     question=question,
-                    mode="Fast", # Just synthesis
+                    mode=mode, # Inherit original mode, no longer throttling to Fast
                     style=style, # Maintain persona
                     log_func=log_func,
                     draft_callback=draft_callback,
