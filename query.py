@@ -99,9 +99,11 @@ async def deep_internal_probe(db: VectorDB, llm: LocalLLM, gap_query: str, mode:
     
     # 3. LLM Evaluator: Can we solve this now?
     system_prompt = (
-        "You are a strict knowledge verification engine. You are given a specific KNOWLEDGE GAP and a list of chunks from an internal database.\n"
-        "Your task: Determine if the answer to the gap is definitively contained in chunks.\n\n"
+        "You are a strict knowledge verification engine. You are given a specific KNOWLEDGE GAP and a list of chunks from an internal database. "
+        "The data includes both specialized AI summaries and 'Raw Source Data' which contains verbatim text from documents.\n\n"
+        "Your task: Determine if the answer to the gap is definitively contained in these chunks.\n\n"
         "Rules:\n"
+        "- Scavenge the 'Raw Source Data' for granular evidence: article numbers, specific letters (a, b, c), technical limits, and exact dates.\n"
         "- If the answer IS there, provide the full technical answer and set 'resolved' to true.\n"
         "- If the answer is partially there but key details are missing, return what you have and set 'resolved' to false.\n"
         "- If search found nothing relevant, set 'resolved' to false.\n\n"
