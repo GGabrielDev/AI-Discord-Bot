@@ -272,7 +272,7 @@ async def answer_question(topic: str, question: str, mode: str = "Balanced", sty
                     await run_autonomous_loop(gap_query, topic, max_iterations=1, depth=3, log_func=log_func)
                 
                 # Recursive call to update the draft with info from this gap
-                _draft = await answer_question(
+                answer = await answer_question(
                     topic=topic,
                     question=question,
                     mode=mode, 
@@ -284,6 +284,14 @@ async def answer_question(topic: str, question: str, mode: str = "Balanced", sty
                     _draft=_draft, # Update the resumable draft
                     _extra_context=sip_context if is_resolved else ""
                 )
+                # If recursion returns a dict (top-level), return it. 
+                # Otherwise update local draft.
+                if isinstance(answer, dict) and _current_auto_loop != 0:
+                    return answer["english"]
+                _draft = answer
+                
+            if _current_auto_loop == 0:
+                return await finalize_dual_report(llm, _draft, language, mode, check_soft_stop())
             return _draft
         else:
             await log("💡 **Resumed report appears complete.** No new gaps identified.")
@@ -555,19 +563,26 @@ async def answer_question(topic: str, question: str, mode: str = "Balanced", sty
             except Exception as e:
                 await loc_log(f"🚨 Sub-tracker failed on `{gap_query}`: {e}")
                 
-        # We researched everything! Now structurally pull that new data and re-evaluate the draft
-        await loc_log("♻️ **Draft Refinement phase:** Merging heavily targeted gap data into intelligence report...")
-        return await answer_question(
-            topic=topic,
-            question=question,
-            mode=mode,
-            log_func=log_func,
-            draft_callback=draft_callback,
-            language=language,
-            _current_auto_loop=_current_auto_loop + 1,
-            _draft=answer
-        )
+    # We researched everything! Now structurally pull that new data and re-evaluate the draft
+    await loc_log("♻️ **Draft Refinement phase:** Merging heavily targeted gap data into intelligence report...")
+    answer = await answer_question(
+        topic=topic,
+        question=question,
+        mode=mode,
+        log_func=log_func,
+        draft_callback=draft_callback,
+        language=language,
+        _current_auto_loop=_current_auto_loop + 1,
+        _draft=answer
+    )
     
+    # Final Guard: Ensure loop 0 always returns the Dual Report Dict
+    if _current_auto_loop == 0:
+        if isinstance(answer, dict): return answer
+        return await finalize_dual_report(llm, answer, language, mode, check_soft_stop())
+    
+    # Recursive layers just return the EN string
+    if isinstance(answer, dict): return answer["english"]
     return answer
 
 async def finalize_dual_report(llm: LocalLLM, english_draft: str, target_language: str, mode: str, is_interrupted: bool) -> dict:
