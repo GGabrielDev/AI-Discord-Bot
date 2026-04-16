@@ -17,6 +17,11 @@ Discord (User Interface)
   │     ├── Live Dashboard Reporting
   │     └── /chain_research → Macro-Prompt Decomposition
   │
+  ├── /crawl_site → Focused Domain Crawler
+  │     ├── Domain Shield (Stay within host)
+  │     ├── PDF Exception (Follow external .pdf links)
+  │     └── BFS Recursive Discovery
+  │
   └── /ask  →  Multi-Query RAG Pipeline
         ├── Semantic Query Expansion
         ├── Deep Semantic Internal Probing (SIP)
@@ -36,11 +41,13 @@ Discord (User Interface)
 - **Live Discord Dashboard** — Deep technical logs (PDF stats, memory chunks, parsing metrics) are streamed natively into Discord via dynamic message editing, completely mimicking the backend console without spamming channels
 - **Soft Stop Interrupts** — Use `/finish` at any time to gracefully wind down loops and wrap up active research sessions without corrupting data or discarding partial work.
 
-### 🔗 Chain Research (`/chain_research`)
-- **Macro Decomposition** — Feed the bot a massive, unbounded prompt and the LLM will exhaustively slice it into non-redundant, highly focused sub-topics
-- **Sequential Agent Looping** — Automatically deploys the autonomous `/research` loop iterativley across every sub-topic seamlessly
-- **Macro Resilience** — Chain-level checkpoints securely save progress between sub-topics; a server crash during topic 4 means the agent instantly resumes at topic 4 upon reboot
 - **Knowledge Pooling** — Vector data from all chain branches are centralized into a single unified `save_to` database
+
+### 🕷️ Focused Site Crawler (`/crawl_site`)
+- **Domain Locking** — Recursively explores a single website while strictly ignoring external links to prevent "bleeding" out of the target domain.
+- **PDF Escape Hatch** — Automatically follows and ingests external links if they point directly to a `.pdf` file, ensuring no official documentation is missed.
+- **BFS Discovery** — Uses a Breadth-First Search queue to exhaustively map a site's structure up to a user-defined depth or page limit.
+- **Resilient State** — Fully integrated with the checkpoint system; large crawls (e.g., 100+ pages) can be safely resumed if interrupted.
 
 ### 🧠 Knowledge Query & Agentic RAG (`/ask`)
 - **Multi-Query Retrieval** — Generates semantic variations of your question to maximize recall across the vector database
@@ -162,14 +169,18 @@ Send `!sync` in your Discord server to register the `/research` and `/ask` slash
 /research subject:"solid state batteries" iterations:5 depth:3
 ```
 The bot will autonomously:
-1. Generate targeted search queries via the LLM
-2. Search the web through SearXNG
-3. Scrape and parse each result (HTML pages and PDFs)
-4. Summarize findings through the LLM
-5. Store analyzed chunks in ChromaDB
-6. Write human-readable Markdown to `knowledge_base/`
-7. Evaluate knowledge gaps and generate new queries for the next iteration
 8. Save checkpoint state after every processed URL
+
+### Recursively Crawling a Website
+```
+/crawl_site url:"https://conatel.gov.py/reglamentaciones" topic:"radio_laws" max_pages:50
+```
+The bot will:
+1. Identify the base domain as the "Home Shield"
+2. Recursively find all internal links on the site
+3. Follow external links ONLY if they lead to a `.pdf`
+4. Summarize and store every discovered page into the `radio_laws` collection
+5. Respect a polite 2-second rate limit between pages
 
 ### Querying Your Knowledge Base
 ```
@@ -214,6 +225,7 @@ AI-Discord-Bot/
 ├── requirements.txt         # Python dependencies
 ├── agent/
 │   ├── loop.py              # Autonomous research loop (core brain)
+│   ├── crawler.py           # Focused domain crawler (/crawl_site)
 │   ├── planner.py           # Search query generation & gap analysis
 │   ├── summarizer.py        # LLM-powered content summarization
 │   ├── wiki_builder.py      # Markdown knowledge base generator
