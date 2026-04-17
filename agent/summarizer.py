@@ -157,7 +157,9 @@ async def summarize_page(raw_text: str, subject: str, url: str, log_func=None) -
         summary = await llm.generate_text_with_budget(
             system_prompt, user_prompt, max_input_words=MAX_INPUT_WORDS, temperature=0.3
         )
-        return summary if summary else raw_text[:2000]  # Fallback to truncated raw if LLM fails
+        # Fallback to truncated raw if LLM fails. We use ~15% of budget for chars (approx 15% * 6)
+        fallback_chars = int(SAFE_WORD_BUDGET * 0.15 * 6)
+        return summary if summary else raw_text[:fallback_chars]
     
     # Long page: split into sections, summarize each, then consolidate
     sections = []
@@ -185,8 +187,10 @@ async def summarize_page(raw_text: str, subject: str, url: str, log_func=None) -
             partial_summaries.append(partial)
     
     if not partial_summaries:
+        # Fallback to truncated raw if all sections fail.
         await log("[Summarizer] All section summaries failed. Returning truncated raw text.")
-        return raw_text[:2000]
+        fallback_chars = int(SAFE_WORD_BUDGET * 0.15 * 6)
+        return raw_text[:fallback_chars]
     
     # If only one section succeeded, return it directly
     if len(partial_summaries) == 1:

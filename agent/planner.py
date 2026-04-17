@@ -1,5 +1,6 @@
 import asyncio
 from llm.client import LocalLLM
+from config.settings import SAFE_WORD_BUDGET
 
 async def generate_search_queries(topic: str, num_queries: int = 3) -> list[str]:
     """Asks the LLM to generate specific search queries for a topic."""
@@ -40,7 +41,11 @@ async def evaluate_and_replan(subject: str, existing_knowledge: list[str], stats
     """
     llm = LocalLLM()
     
-    knowledge_summary = "\n".join([f"- {chunk[:300]}" for chunk in existing_knowledge[:15]])
+    # Scale the knowledge preview based on the budget. 
+    # Each snippet is ~1% of words (approx 6% of characters).
+    snippet_char_limit = int(SAFE_WORD_BUDGET * 0.01 * 6)
+    # We take as many chunks as provided by the loop (scaled by budget)
+    knowledge_summary = "\n".join([f"- {chunk[:snippet_char_limit]}" for chunk in existing_knowledge])
     
     system_prompt = (
         "You are an expert research evaluator. You are reviewing the progress of an autonomous research agent. "

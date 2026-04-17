@@ -212,8 +212,11 @@ async def run_autonomous_loop(subject, topic, max_iterations=3, depth=3, log_fun
             await report("🧠 *AI is evaluating current knowledge and identifying gaps...*")
             
             # 1. Sample what we've collected so far
-            sample = await db.get_sample(n_samples=15)
+            # We target ~25% of the SAFE_WORD_BUDGET for the evaluation overview (avg chunk ~400 words)
+            dynamic_n_samples = max(10, int(SAFE_WORD_BUDGET * 0.25 / 400))
+            sample = await db.get_sample(n_samples=dynamic_n_samples)
             stats = await db.get_collection_stats()
+
             
             await report(f"📊 *Progress: {stats['total_chunks']} chunks from {stats['unique_sources']} sources*")
             
