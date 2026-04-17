@@ -511,14 +511,14 @@ async def answer_question(topic: str, question: str, mode: str = "Balanced", sty
     # 6. Extract Gaps and Agentic RAG Re-research
     gap_queries = await extract_gap_queries(llm, answer)
     
+    async def loc_log(m, is_sub_step=False):
+        print(m)
+        if log_func: await log_func(m, is_sub_step)
+
     if gap_queries:
         # Deliver intermediate draft file so the user can see the gaps before it stalls researching
         if draft_callback:
             await draft_callback(answer, _current_auto_loop)
-            
-        async def loc_log(m, is_sub_step=False):
-            print(m)
-            if log_func: await log_func(m, is_sub_step)
             
         await loc_log(f"⚠️ **Knowledge Gaps detected.** Auto-initiating targeted research loop (Iteration {_current_auto_loop + 1}/{max_auto_loops if max_auto_loops < 999 else '∞'})...")
         await loc_log(f"🎯 *Formulating Gap Chain:* {', '.join(gap_queries)}", is_sub_step=True)

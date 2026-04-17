@@ -126,6 +126,7 @@ class LocalLLM:
             timeout_val = timeout_override or LLM_TIMEOUT
             
             # Simple heuristic check for large inputs
+            total_words = len(system_prompt.split()) + len(user_prompt.split())
             if total_words > SAFE_WORD_BUDGET:
                 print(f"[LLM] ⚠️ Sending massive payload ({total_words:,} words) which exceeds the safe budget ({SAFE_WORD_BUDGET:,}). Inference may be slow.")
 
