@@ -590,13 +590,13 @@ async def answer_question(topic: str, question: str, mode: str = "Balanced", sty
     # Final Guard: Ensure loop 0 always returns the Dual Report Dict
     if _current_auto_loop == 0:
         if isinstance(answer, dict): return answer
-        return await finalize_dual_report(llm, answer, language, mode, check_soft_stop())
+        return await finalize_dual_report(llm, answer, topic, language, mode, check_soft_stop())
     
     # Recursive layers just return the EN string
     if isinstance(answer, dict): return answer["english"]
     return answer
 
-async def finalize_dual_report(llm: LocalLLM, english_draft: str, target_language: str, mode: str, is_interrupted: bool) -> dict:
+async def finalize_dual_report(llm: LocalLLM, english_draft: str, topic: str, target_language: str, mode: str, is_interrupted: bool) -> dict:
     """Performs the final translation pass and packages both EN and Translated versions."""
     if target_language.lower() == "english":
         return {"english": english_draft, "translated": None}
