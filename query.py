@@ -406,7 +406,9 @@ async def answer_question(topic: str, question: str, mode: str = "Balanced", sty
     
     # Guard: truncate if the assembled context exceeds the model's budget
     # We prioritize Summaries over Raw Source Data during truncation
+    context_words = context_text.split()
     if len(context_words) > MAX_CONTEXT_WORDS:
+
         await log(f"⚠️ Context exceeds expanded budget ({len(context_words):,} words). Applying tiered truncation...")
         
         # New Tiered Approach:
