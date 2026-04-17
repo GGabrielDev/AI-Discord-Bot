@@ -7,9 +7,9 @@ from config.settings import LLM_CONTEXT_WINDOW, SAFE_WORD_BUDGET
 from agent.checkpoint import check_soft_stop
 
 # Safety ceiling for context fed to the LLM during /ask synthesis.
-# Estimated at ~0.60 words per token (conservative for technical/multilingual text), 
-# with 80% headroom for system prompt + generation.
-MAX_CONTEXT_WORDS = int(LLM_CONTEXT_WINDOW * 0.60 * 0.8)
+# We utilize a large portion of the SAFE_WORD_BUDGET to allow the model 
+# to 'stretch its legs' with massive context, while reserving room for the R1 <think> block.
+MAX_CONTEXT_WORDS = int(SAFE_WORD_BUDGET * 0.85)
 
 def fit_to_context_budget(system_prompt: str, user_prompt: str, max_words: int) -> tuple[str, str]:
     """Ensures total words across system and user prompts stay within max_words.
@@ -406,9 +406,8 @@ async def answer_question(topic: str, question: str, mode: str = "Balanced", sty
     
     # Guard: truncate if the assembled context exceeds the model's budget
     # We prioritize Summaries over Raw Source Data during truncation
-    context_words = context_text.split()
     if len(context_words) > MAX_CONTEXT_WORDS:
-        await log(f"⚠️ Context exceeds budget ({len(context_words):,} words). Applying tiered truncation...")
+        await log(f"⚠️ Context exceeds expanded budget ({len(context_words):,} words). Applying tiered truncation...")
         
         # New Tiered Approach:
         # 1. Truncate 'Raw Source Data' blocks first

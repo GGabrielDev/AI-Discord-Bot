@@ -6,8 +6,9 @@ from config.settings import LLM_CONTEXT_WINDOW, SAFE_WORD_BUDGET
 MAX_INPUT_WORDS = SAFE_WORD_BUDGET
 
 # Max words to send per summarization call. 
-# We cap this at 3000 or the total budget, whichever is smaller.
-MAX_WORDS_PER_CALL = min(3000, int(SAFE_WORD_BUDGET * 0.8))
+# Use 70% of the safe word budget to leave plenty of room for 
+# the prompt instructions and the R1 model's <think> response.
+MAX_WORDS_PER_CALL = int(SAFE_WORD_BUDGET * 0.7)
 
 
 def chunk_text(text: str, target_size: int = 400, overlap_sentences: int = 2) -> list[str]:
@@ -231,7 +232,7 @@ async def extract_key_facts(raw_text: str, subject: str) -> list[str]:
     """
     llm = LocalLLM()
     
-    # Truncate if too long for a single call
+    # Truncate if too long for a single call (now uses dynamic MAX_WORDS_PER_CALL)
     words = raw_text.split()
     if len(words) > MAX_WORDS_PER_CALL:
         raw_text = " ".join(words[:MAX_WORDS_PER_CALL])

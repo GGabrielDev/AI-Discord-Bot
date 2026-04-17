@@ -18,8 +18,11 @@ LLM_CONTEXT_WINDOW = int(os.getenv("LLM_CONTEXT_WINDOW", "131072"))  # 128K for 
 LLM_TIMEOUT = int(os.getenv("LLM_TIMEOUT", "120"))  # seconds
 
 # --- Context Budgeting ---
-# Estimated at ~0.75 words per token, with 80% of the context window as headroom.
+# Derived from the hardware context window. 
+# We estimate ~0.75 words per token (safe for technical text) 
+# and reserve 20% for system prompts/output generation headroom.
 SAFE_WORD_BUDGET = int(LLM_CONTEXT_WINDOW * 0.75 * 0.8)
+
 
 # --- Search Settings ---
 SEARXNG_URL = os.getenv("SEARXNG_URL", "http://localhost:8081")

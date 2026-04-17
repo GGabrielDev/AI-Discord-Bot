@@ -99,8 +99,9 @@ Keep your vector database lean and free of redundant data:
 ### 🛡️ Hardware-Aware Optimizations
 Designed for constrained hardware (tested on AMD BC-250 with 14.75GB unified memory):
 - **Two-Tier PDF Extraction** — Lightweight PyMuPDF (~5MB RAM) by default; deep learning Marker OCR (~1.3GB RAM) available as opt-in for complex layouts
+- **Large Context Optimization** — Automatically detects massive context windows (e.g., 128K) and dynamically scales chunk sizes to minimize LLM calls and maximize technical recall.
+- **Context Budget Enforcement** — All LLM calls enforce hardware-aware word-count ceilings (70-85% of budget) to prevent context window overflow while leaving room for model reasoning.
 - **CPU-Only Processing** — When Marker is enabled, forces PyTorch to CPU to prevent OOM conflicts with llama-server's GPU memory
-- **Context Budget Enforcement** — All LLM calls enforce word-count ceilings to prevent context window overflow
 - **Fully Async Pipeline** — Scraper, search, and PDF parsing all run without blocking the Discord event loop
 - **Token Usage Tracking** — Every LLM call logs prompt/completion token counts with running session totals
 
