@@ -13,7 +13,7 @@ if not DISCORD_TOKEN:
 LLM_API_BASE = os.getenv("LLM_API_BASE", "http://localhost:8080/v1")
 LLM_API_KEY = os.getenv("LLM_API_KEY", "sk-no-key-required")
 LLM_MODEL_NAME = os.getenv("LLM_MODEL_NAME", "local-model")
-LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "2048"))
+LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", min(16384, int(LLM_CONTEXT_WINDOW * 0.125))))
 LLM_CONTEXT_WINDOW = int(os.getenv("LLM_CONTEXT_WINDOW", "131072"))  # 128K for Gemma 4 E4B
 LLM_TIMEOUT = int(os.getenv("LLM_TIMEOUT", "120"))  # seconds
 

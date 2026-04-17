@@ -3,7 +3,7 @@ import re
 import os
 from storage.vectordb import VectorDB
 from llm.client import LocalLLM
-from config.settings import LLM_CONTEXT_WINDOW, SAFE_WORD_BUDGET
+from config.settings import LLM_CONTEXT_WINDOW, SAFE_WORD_BUDGET, LLM_MAX_TOKENS
 from agent.checkpoint import check_soft_stop
 from agent.wiki_builder import store_final_report
 
@@ -307,7 +307,7 @@ async def answer_question(topic: str, question: str, mode: str = "Balanced", sty
                 _draft = answer
                 
             if _current_auto_loop == 0:
-                return await finalize_dual_report(llm, _draft, language, mode, check_soft_stop())
+                return await finalize_dual_report(llm, _draft, topic, language, mode, check_soft_stop())
             return _draft
         else:
             await log("💡 **Resumed report appears complete.** No new gaps identified.")
@@ -513,7 +513,7 @@ async def answer_question(topic: str, question: str, mode: str = "Balanced", sty
         pass
 
     # Use default LLM_TIMEOUT from .env (no hardcoded override)
-    answer = await llm.generate_text(system_prompt, user_prompt, temperature=0.3, max_tokens=8192)
+    answer = await llm.generate_text(system_prompt, user_prompt, temperature=0.3, max_tokens=LLM_MAX_TOKENS)
     
     # 5. End if Fast mode or max auto-loops hit
     is_interrupted = check_soft_stop()
@@ -617,7 +617,7 @@ async def finalize_dual_report(llm: LocalLLM, english_draft: str, topic: str, ta
     )
     user_prompt = f"REPORT TO TRANSLATE:\n{english_draft}"
     
-    translated = await llm.generate_text(system_prompt, user_prompt, temperature=0.1, max_tokens=8192)
+    translated = await llm.generate_text(system_prompt, user_prompt, temperature=0.1, max_tokens=LLM_MAX_TOKENS)
     
     # 💾 Auto-Archive Persistent Reports
     store_final_report(topic, english_draft, "EN")
