@@ -1,10 +1,11 @@
-import argparse
 import asyncio
 import re
+import os
 from storage.vectordb import VectorDB
 from llm.client import LocalLLM
 from config.settings import LLM_CONTEXT_WINDOW, SAFE_WORD_BUDGET
 from agent.checkpoint import check_soft_stop
+from agent.wiki_builder import store_final_report
 
 # Safety ceiling for context fed to the LLM during /ask synthesis.
 # We utilize a large portion of the SAFE_WORD_BUDGET to allow the model 
@@ -228,7 +229,10 @@ STYLE_CONFIG = {
     }
 }
 
-async def answer_question(topic: str, question: str, mode: str = "Balanced", style: str = "Concise", log_func=None, draft_callback=None, language: str = "English", _current_auto_loop: int = 0, _draft: str = None, _extra_context: str = None) -> str:
+async def answer_question(topic: str, question: str, mode: str = "Balanced", style: str = "Concise", 
+                      log_func=None, draft_callback=None, language: str = "English", 
+                      no_web: bool = False,
+                      _current_auto_loop: int = 0, _draft: str = None, _extra_context: str = None) -> str:
     """Answers a question pulling from the vector DB, with true Agentic RAG auto-looping for explicitly identified gaps."""
     # Import here to avoid circular imports if query.py is loaded first
     from agent.loop import run_autonomous_loop
@@ -239,6 +243,8 @@ async def answer_question(topic: str, question: str, mode: str = "Balanced", sty
     # Mode Constraints
     mode_limits = {"Fast": 0, "Balanced": 1, "Thorough": 3, "Omniscient": 999}
     max_auto_loops = mode_limits.get(mode, 1)
+    if no_web: 
+        max_auto_loops = 0
     
     # Global logging helper for this session
     async def log(msg: str, is_sub_step: bool = False):
@@ -273,8 +279,11 @@ async def answer_question(topic: str, question: str, mode: str = "Balanced", sty
                     sip_context = f"INTERNAL CACHE DATA FOR '{gap_query}':\n{sip_answer}"
                     await loc_log(f"✅ **SIP MATCH:** Integrated from internal cache.", is_sub_step=True)
                 else:
-                    await loc_log(f"❌ *Not found internally. Launching web agent...*", is_sub_step=True)
-                    await run_autonomous_loop(gap_query, topic, max_iterations=1, depth=3, log_func=log_func)
+                    if no_web:
+                        await loc_log(f"⚠️ **Local-Only Mode:** Skipping web agent for gap `{gap_query}`.", is_sub_step=True)
+                    else:
+                        await loc_log(f"❌ *Not found internally. Launching web agent...*", is_sub_step=True)
+                        await run_autonomous_loop(gap_query, topic, max_iterations=1, depth=3, log_func=log_func)
                 
                 # Recursive call to update the draft with info from this gap
                 answer = await answer_question(
@@ -285,10 +294,12 @@ async def answer_question(topic: str, question: str, mode: str = "Balanced", sty
                     log_func=log_func,
                     draft_callback=draft_callback,
                     language=language,
+                    no_web=no_web, # Pass the flag
                     _current_auto_loop=_current_auto_loop + 1,
                     _draft=_draft, # Update the resumable draft
                     _extra_context=sip_context if is_resolved else ""
                 )
+
                 # If recursion returns a dict (top-level), return it. 
                 # Otherwise update local draft.
                 if isinstance(answer, dict) and _current_auto_loop != 0:
@@ -334,7 +345,12 @@ async def answer_question(topic: str, question: str, mode: str = "Balanced", sty
         if scavenge_count > 12: scavenge_count = 12
 
     await log(f"⏳ **Phase 1: Multi-Stage Scout initiated...** (Variations: {num_variations + 1})")
-    search_queries = await _expand_query(llm, question, num_variations)
+    
+    if no_web:
+        await log("🛡️ **Local-Only Mode:** Skipping web reconnaissance.")
+        search_queries = [question]
+    else:
+        search_queries = await _expand_query(llm, question, num_variations)
     
     # 2. Stage 1: The Scout (Summaries Only)
     # We find the 'Hints' first to know which sources are actually worth scavenging.
@@ -369,15 +385,19 @@ async def answer_question(topic: str, question: str, mode: str = "Balanced", sty
     await log(f"🔎 **Phase 2: Scavenging technical evidence from {len(top_sources)} high-relevance sources...**")
     
     scavenge_results = []
-    for src in top_sources:
-        # For each top source, pull the most relevant raw chunks
-        res = await db.search_with_metadata(question, n_results=15, where={
-            "$and": [
-                {"source": src},
-                {"chunk_type": "raw"}
-            ]
-        })
-        if res: scavenge_results.extend(res)
+    if no_web:
+        await log("🛡️ **Local-Only Mode:** Skipping web scavenging.")
+    else:
+        for src in top_sources:
+            # For each top source, pull the most relevant raw chunks
+            res = await db.search_with_metadata(question, n_results=15, where={
+                "$and": [
+                    {"source": src},
+                    {"chunk_type": "raw"}
+                ]
+            })
+            if res: scavenge_results.extend(res)
+
         
     # 4. Deduplicate and Assemble
     all_hits = scout_results + scavenge_results
@@ -535,52 +555,37 @@ async def answer_question(topic: str, question: str, mode: str = "Balanced", sty
             # We try to solve the gap using what we HAVE before hitting the web
             sip_answer, sip_sources, is_resolved = await deep_internal_probe(db, llm, gap_query, mode, log_func=log_func)
             
+            sip_context = ""
             if is_resolved:
-                await loc_log(f"✅ **SIP MATCH:** High-confidence answer found internally! Skipping web search for this gap.", is_sub_step=True)
-                # We inject this "Virtual Research" into the context for the next draft refinement
-                # We format it to look like it came from research so the refiner treats it properly
-                sip_context = f"--- Internal Deep Probe Resolution (Self-Search) ---\n{sip_answer}"
-                answer = await answer_question(
-                    topic=topic,
-                    question=question,
-                    mode=mode, # Inherit original mode, no longer throttling to Fast
-                    style=style, # Maintain persona
-                    log_func=log_func,
-                    draft_callback=draft_callback,
-                    language=language,
-                    _current_auto_loop=_current_auto_loop + 1,
-                    _draft=answer, # Use current draft
-                    _extra_context=sip_context
-                )
-                continue # Gap solved!
-            
-            # If not resolved or partially resolved, we hit the web (Graceful Fallback)
-            if sip_answer:
-                await loc_log(f"🔸 *Partial internal match found, but doubt remains. Initiating web fallback...*", is_sub_step=True)
+                sip_context = f"INTERNAL CACHE DATA FOR '{gap_query}':\n{sip_answer}"
+                await loc_log(f"✅ **SIP MATCH:** Integrated from internal cache.", is_sub_step=True)
+            elif no_web:
+                await loc_log(f"⚠️ **Local-Only Mode:** Skipping web fallback investigation.", is_sub_step=True)
+            else:
+                await loc_log(f"❌ *Not found internally. Launching web agent...*", is_sub_step=True)
+                try:
+                    await run_autonomous_loop(
+                        subject=gap_query,
+                        topic=topic,
+                        max_iterations=1,
+                        depth=5,
+                        log_func=log_func
+                    )
+                except Exception as e:
+                    await loc_log(f"🚨 Sub-tracker failed on `{gap_query}`: {e}")
 
-            try:
-                await run_autonomous_loop(
-                    subject=gap_query,
-                    topic=topic,
-                    max_iterations=1,
-                    depth=5,
-                    log_func=log_func
-                )
-            except Exception as e:
-                await loc_log(f"🚨 Sub-tracker failed on `{gap_query}`: {e}")
-                
-    # We researched everything! Now structurally pull that new data and re-evaluate the draft
-    await loc_log("♻️ **Draft Refinement phase:** Merging heavily targeted gap data into intelligence report...")
-    answer = await answer_question(
-        topic=topic,
-        question=question,
-        mode=mode,
-        log_func=log_func,
-        draft_callback=draft_callback,
-        language=language,
-        _current_auto_loop=_current_auto_loop + 1,
-        _draft=answer
-    )
+            answer = await answer_question(
+                topic=topic,
+                question=question,
+                mode=mode,
+                log_func=log_func,
+                draft_callback=draft_callback,
+                language=language,
+                no_web=no_web,
+                _current_auto_loop=_current_auto_loop + 1,
+                _draft=answer,
+                _extra_context=sip_context
+            )
     
     # Final Guard: Ensure loop 0 always returns the Dual Report Dict
     if _current_auto_loop == 0:
@@ -613,6 +618,12 @@ async def finalize_dual_report(llm: LocalLLM, english_draft: str, target_languag
     user_prompt = f"REPORT TO TRANSLATE:\n{english_draft}"
     
     translated = await llm.generate_text(system_prompt, user_prompt, temperature=0.1, max_tokens=8192)
+    
+    # 💾 Auto-Archive Persistent Reports
+    store_final_report(topic, english_draft, "EN")
+    if translated:
+        store_final_report(topic, translated, target_language)
+        
     return {"english": english_draft, "translated": translated}
 
 def main():

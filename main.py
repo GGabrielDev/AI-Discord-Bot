@@ -234,7 +234,8 @@ async def chain_research(interaction: discord.Interaction, prompt: str, topic: s
     question="What do you want to know?",
     mode="Select internal analysis strategy (Fast/Balanced/Thorough).",
     language="Optional: Force output language (e.g. Spanish, French). Defaults to English.",
-    resume_from="Optional: Attach a previous .md report to resume research and fill its gaps."
+    resume_from="Optional: Attach a previous .md report to resume research and fill its gaps.",
+    local_only="If True, skips all web searching/scraping and uses ONLY existing database data."
 )
 @app_commands.autocomplete(topic=topic_autocomplete)
 @app_commands.choices(mode=[
@@ -251,7 +252,8 @@ async def ask(interaction: discord.Interaction, topic: str, question: str,
             mode: app_commands.Choice[str] = None, 
             style: app_commands.Choice[str] = None, 
             language: str = "English",
-            resume_from: discord.Attachment = None):
+            resume_from: discord.Attachment = None,
+            local_only: bool = False):
     # Acknowledge the command natively - Truncate long questions to stay within Discord's 2000 char limit
     safe_q = (question[:1500] + '...') if len(question) > 1500 else question
     await interaction.response.send_message(f"### 🧠 Intelligence Report: {topic}\n> **Q:** {safe_q}\n\n⚙️ **Initializing Agentic Analysis...**")
@@ -309,6 +311,7 @@ async def ask(interaction: discord.Interaction, topic: str, question: str,
             log_func=discord_status_logger, 
             draft_callback=handle_draft, 
             language=language,
+            no_web=local_only,
             _draft=resume_draft 
         )
         
@@ -316,27 +319,38 @@ async def ask(interaction: discord.Interaction, topic: str, question: str,
         files = []
         
         # English Version
-        en_text = answer_data["english"]
+        en_text = answer_data.get("english", "")
+        if not en_text:
+            en_text = "⚠️ **Warning:** The English report synthesis failed or returned empty content."
+        
         en_bytes = io.BytesIO(en_text.encode('utf-8'))
-        files.append(discord.File(fp=en_bytes, filename=f"Report_{topic}_EN.md"))
+        en_filename = f"Report_{topic}_EN.md"
+        files.append(discord.File(fp=en_bytes, filename=en_filename))
+        print(f"[Main] Prepared {en_filename} ({len(en_text.encode('utf-8')):,} bytes)")
         
         # Translated Version
         if answer_data.get("translated"):
             tr_text = answer_data["translated"]
             tr_bytes = io.BytesIO(tr_text.encode('utf-8'))
-            files.append(discord.File(fp=tr_bytes, filename=f"Report_{topic}_{language.upper()}.md"))
+            tr_filename = f"Report_{topic}_{language.upper()}.md"
+            files.append(discord.File(fp=tr_bytes, filename=tr_filename))
+            print(f"[Main] Prepared {tr_filename} ({len(tr_text.encode('utf-8')):,} bytes)")
+        
+        # 3. Deliver via Fresh Message (Avoids 15m Interaction Timeout)
+        final_msg = (
+            f"### 🏁 Intelligence Report Finalized: {topic}\n"
+            f"> **Q:** {safe_q}\n\n"
+            f"✅ Analysis Complete! Local-Only: `{local_only}`. Reports attached below."
+        )
         
         try:
-            await interaction.edit_original_response(
-                content=f"### 🧠 Intelligence Report: {topic}\n> **Q:** {safe_q}\n\n✅ Analysis Complete. Generated reports attached below.",
-                attachments=files
-            )
-        except discord.errors.HTTPException:
-            # Token expired. Send as a new message.
-            await interaction.channel.send(
-                content=f"<@{interaction.user.id}> ### 🧠 Intelligence Report: {topic}\n> **Q:** {safe_q}\n\n✅ Analysis Complete. Generated reports attached below.",
-                files=files
-            )
+            # We use interaction.channel.send because it is independent of the 15m interaction token
+            await interaction.channel.send(content=final_msg, files=files)
+            # Update the original "Initializing..." message to show we're done
+            await interaction.edit_original_response(content="✅ **Analysis Complete.** Reports delivered as a new message.")
+        except Exception as e:
+            print(f"[Main] Failed to send final report message: {e}")
+            await interaction.channel.send(f"🚨 **Final Report Delivery Failed:** {e}\n*(Note: Data should still be archived in your local knowledge_base)*")
             
     except Exception as e:
         await interaction.channel.send(f"🚨 **CRITICAL SYSTEM ERROR:** ```{e}```")
