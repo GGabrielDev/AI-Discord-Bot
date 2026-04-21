@@ -2,7 +2,21 @@ import chromadb
 import re
 import time
 import asyncio
+from urllib.parse import urlparse
 from config.settings import CHROMA_DB_PATH
+
+def _derive_source_domain(source_url: str) -> str:
+    try:
+        return urlparse(source_url).netloc.lower()
+    except Exception:
+        return ""
+
+def _derive_path_depth(source_url: str) -> int:
+    try:
+        path = urlparse(source_url).path.strip("/")
+        return len([segment for segment in path.split("/") if segment])
+    except Exception:
+        return 0
 
 class VectorDB:
     def __init__(self, collection_name="research_data"):
@@ -30,13 +44,19 @@ class VectorDB:
 
         timestamp = str(int(time.time()))
         ids = [f"{source_url}_chunk_{i}" for i in range(len(chunks))]
+        source_domain = _derive_source_domain(source_url)
+        source_path_depth = _derive_path_depth(source_url)
         metadatas = [{
             "source": source_url,
             "chunk_type": chunk_type,
             "source_title": source_title,
             "timestamp": timestamp,
             "chunk_index": i,
-            "total_chunks": len(chunks)
+            "total_chunks": len(chunks),
+            "chunk_word_count": len(chunks[i].split()),
+            "chunk_char_count": len(chunks[i]),
+            "source_domain": source_domain,
+            "source_path_depth": source_path_depth
         } for i in range(len(chunks))]
 
         # Thread offload for blocking local embedding generation
@@ -93,12 +113,16 @@ class VectorDB:
         
         return []
 
-    async def search_with_metadata(self, query: str, n_results: int = 5, where: dict = None):
+    async def search_with_metadata(self, query: str, n_results: int = 5, where: dict = None, include_distances: bool = False):
         """Search and return both documents and their metadata, with optional filtering."""
+        include_fields = ["documents", "metadatas"]
+        if include_distances:
+            include_fields.append("distances")
+
         kwargs = {
             "query_texts": [query],
             "n_results": n_results,
-            "include": ["documents", "metadatas"]
+            "include": include_fields
         }
         
         if where:
@@ -109,9 +133,32 @@ class VectorDB:
         if results and results['documents'] and results['metadatas']:
             docs = results['documents'][0]
             metas = results['metadatas'][0]
+            if include_distances:
+                raw_distances = results.get("distances", [[]])
+                distances = raw_distances[0] if raw_distances else []
+                if len(distances) < len(docs):
+                    distances = list(distances) + [None] * (len(docs) - len(distances))
+                return list(zip(docs, metas, distances))
             return list(zip(docs, metas))
         
         return []
+
+    async def get_all_chunks(self) -> dict:
+        """Returns all chunk ids, documents, and metadata for maintenance tooling."""
+        return await asyncio.to_thread(
+            self.collection.get,
+            include=["documents", "metadatas"]
+        )
+
+    async def update_chunk_metadata(self, ids: list[str], metadatas: list[dict]):
+        """Updates metadata for existing chunks."""
+        if not ids:
+            return
+        await asyncio.to_thread(
+            self.collection.update,
+            ids=ids,
+            metadatas=metadatas
+        )
 
     async def get_sample(self, n_samples: int = 10) -> list[str]:
         """Returns a diverse sample of stored knowledge for evaluation."""

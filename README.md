@@ -60,6 +60,7 @@ Discord (User Interface)
 - **Deep Semantic Internal Probing (SIP)** — Before hitting the web to fill a Knowledge Gap, the agent performs a massive multi-vector "Internal Brain Search" to verify if the answer is already hidden in existing raw data.
 - **Cross-Session URL Memory** — The agent recognizes URLs it has already processed in previous sessions. Instead of re-scraping, it performs a **Virtual Scrape**: surgically probing its existing database to extract answers without consuming new web search or summarization tokens.
 - **Disconnected Persistence (Resume)** — Upload a previous `.md` report to the `/ask` command using the `resume_from` parameter. The agent will parse the report, extract the remaining Knowledge Gaps, and automatically resume recursive research to fill them.
+- **Confidence-Gated Gap Routing** — Unresolved gaps are scored against local evidence first, partial offline findings are preserved, and web escalation only happens when confidence stays weak, stale, or repeatedly unresolved.
 - **Dual-Language Fidelity** — All internal synthesis is performed in **English** to maintain maximum technical accuracy from sources. If another language is requested, the agent delivers both the high-fidelity **English Report** and the natively **Translated Report** as separate files.
 - **Universal Soft Stop** — The `/finish` command acts as a persistent broadcast signal, instantly halting all recursive research layers, scrapers, and synthesis loops in unison.
 - **Analyst Personas (Styles)** — Choose Between two distinct reporting styles:
@@ -89,9 +90,14 @@ When a research session is interrupted (power outage, network failure, OOM crash
 ### 🧹 Database Maintenance
 Keep your vector database lean and free of redundant data:
 - **Duplicate Pruning** — Use the included maintenance utility to remove old or redundant scrapes of the same URL.
+- **Metadata Backfill** — Annotate existing chunks with derived source coverage, raw/summary availability, domain info, and retrieval quality scores for the new local-first gap router.
 - **Run the cleaner:**
   ```bash
   PYTHONPATH=. ./bin/python tools/clean_db.py --topic radio_research --execute
+  ```
+- **Run the metadata backfill:**
+  ```bash
+  PYTHONPATH=. ./bin/python tools/backfill_metadata.py --topic radio_research --execute
   ```
 
 ---
