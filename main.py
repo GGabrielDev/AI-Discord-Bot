@@ -174,15 +174,22 @@ async def chain_research(interaction: discord.Interaction, prompt: str, topic: s
     await interaction.channel.send(plan_msg)
         
     # We check if a chain checkpoint exists.
-    checkpoint = load_chain_checkpoint(prompt, topic)
+    checkpoint = load_chain_checkpoint(prompt)
     if checkpoint:
-        start_idx = checkpoint["current_index"]
-        queries = checkpoint["queries"]
+        start_idx = checkpoint["current_topic_index"]
+        queries = checkpoint["sub_topics"]
         sub_topic = queries[start_idx]
         await interaction.channel.send(f"⚠️ Resuming exactly from interrupted chain: {topic} - `{sub_topic}`")
     else:
         # Save a new checkpoint so if we crash during decomposition, we can't resume, we just start over
-        save_chain_checkpoint(prompt, topic, sub_topics)
+        save_chain_checkpoint(
+            prompt=prompt,
+            original_topic=topic,
+            iterations=len(sub_topics),
+            depth=max_depth,
+            sub_topics=sub_topics,
+            current_topic_index=0
+        )
         start_idx = 0
         queries = sub_topics
         
@@ -190,7 +197,14 @@ async def chain_research(interaction: discord.Interaction, prompt: str, topic: s
         sub_topic = queries[i]
         
         # Save progress at the start of each topic
-        save_chain_checkpoint(prompt, topic, queries, i)
+        save_chain_checkpoint(
+            prompt=prompt,
+            original_topic=topic,
+            iterations=len(queries),
+            depth=max_depth,
+            sub_topics=queries,
+            current_topic_index=i
+        )
         
         await interaction.channel.send(f"\n🚀 **Chain Progress {i+1}/{len(queries)} — Starting sub-chain:** `{sub_topic}`")
         

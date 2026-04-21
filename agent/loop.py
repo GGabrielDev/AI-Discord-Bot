@@ -51,11 +51,15 @@ async def run_autonomous_loop(subject, topic, max_iterations=3, depth=3, log_fun
         if log_func:
             await log_func(msg, is_sub_step)
 
-    db = VectorDB(collection_name=topic)
-    llm = LocalLLM()
-    
     # --- Checkpoint Recovery ---
     checkpoint = load_checkpoint(subject)
+    if checkpoint and checkpoint.get("status") == "in_progress":
+        topic = checkpoint.get("topic", topic)
+        max_iterations = checkpoint.get("max_iterations", max_iterations)
+        depth = checkpoint.get("depth", depth)
+
+    db = VectorDB(collection_name=topic)
+    llm = LocalLLM()
     
     if checkpoint and checkpoint.get("status") == "in_progress":
         # RESUME from saved state

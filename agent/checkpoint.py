@@ -19,6 +19,30 @@ from datetime import datetime
 CHECKPOINT_DIR = "checkpoints"
 SOFT_STOP_FLAG = os.path.join(CHECKPOINT_DIR, "SOFT_STOP.flag")
 
+def _load_json_checkpoint(filepath: str) -> dict | None:
+    """Loads checkpoint JSON from main or temp file when forced-close leaves only .tmp."""
+    candidates = [filepath]
+    tmp_path = filepath + ".tmp"
+    if os.path.exists(tmp_path):
+        candidates.append(tmp_path)
+
+    for candidate in candidates:
+        if not os.path.exists(candidate):
+            continue
+        try:
+            with open(candidate, "r", encoding="utf-8") as f:
+                state = json.load(f)
+
+            if candidate.endswith(".tmp") and not os.path.exists(filepath):
+                os.rename(candidate, filepath)
+                print("[Checkpoint] ♻️ Recovered interrupted temp checkpoint.")
+
+            return state
+        except json.JSONDecodeError:
+            print(f"[Checkpoint] ⚠️ Ignoring unreadable checkpoint file: {candidate}")
+
+    return None
+
 def request_soft_stop():
     """Drops a flag file to request a graceful exit of currently running loops."""
     os.makedirs(CHECKPOINT_DIR, exist_ok=True)
@@ -118,12 +142,14 @@ def load_checkpoint(subject: str) -> dict | None:
     """
     filepath = _checkpoint_path(subject)
     
-    if not os.path.exists(filepath):
+    if not os.path.exists(filepath) and not os.path.exists(filepath + ".tmp"):
         return None
     
     try:
-        with open(filepath, "r", encoding="utf-8") as f:
-            state = json.load(f)
+        state = _load_json_checkpoint(filepath)
+        if state is None:
+            delete_checkpoint(subject)
+            return None
         
         # Convert lists back to sets for the loop
         state["seen_urls"] = set(state.get("seen_urls", []))
@@ -200,12 +226,14 @@ def load_chain_checkpoint(prompt: str) -> dict | None:
     """Loads a macro chain checkpoint by the hash of the original prompt."""
     filepath = _chain_checkpoint_path(prompt)
     
-    if not os.path.exists(filepath):
+    if not os.path.exists(filepath) and not os.path.exists(filepath + ".tmp"):
         return None
     
     try:
-        with open(filepath, "r", encoding="utf-8") as f:
-            state = json.load(f)
+        state = _load_json_checkpoint(filepath)
+        if state is None:
+            delete_chain_checkpoint(prompt)
+            return None
             
         print(f"[Chain Checkpoint] 📂 Found saved chain: topic {state['current_topic_index'] + 1}/{len(state['sub_topics'])}")
         return state
