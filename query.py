@@ -918,8 +918,6 @@ async def translate_markdown_report(markdown_text: str, target_language: str, ll
     language = normalize_target_language(target_language)
     if not markdown_text or not markdown_text.strip():
         raise ValueError("Markdown report is empty.")
-    if language.lower() == "english":
-        return markdown_text
 
     translator = llm or LocalLLM()
     system_prompt = (

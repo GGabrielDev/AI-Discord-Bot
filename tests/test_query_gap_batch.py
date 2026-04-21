@@ -171,14 +171,14 @@ class AskFinalizeReportTests(unittest.IsolatedAsyncioTestCase):
 
 
 class TranslateReportHelperTests(unittest.IsolatedAsyncioTestCase):
-    async def test_translate_markdown_report_skips_llm_for_english(self):
+    async def test_translate_markdown_report_uses_llm_for_english_target(self):
         llm = Mock()
-        llm.generate_text = AsyncMock()
+        llm.generate_text = AsyncMock(return_value="# Title\n\nContent")
 
         result = await query.translate_markdown_report("# Title", "English", llm=llm)
 
-        self.assertEqual(result, "# Title")
-        llm.generate_text.assert_not_awaited()
+        self.assertEqual(result, "# Title\n\nContent")
+        llm.generate_text.assert_awaited_once()
 
     async def test_translate_and_archive_report_uses_llm_and_archives_target_language(self):
         llm = Mock()
