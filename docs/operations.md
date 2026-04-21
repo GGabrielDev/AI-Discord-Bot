@@ -58,7 +58,9 @@ If process closes during `/research` or `/chain_research`, restart bot and invok
 
 ### `/ask` resume
 
-`/ask` does not auto-resume after crash. Use the intermediate or previous markdown report with the `resume_from` attachment field.
+If the same `/ask` command is re-run with the same topic/question/settings after an interruption, the bot can resume from its saved checkpoint.
+
+Manual resume is still available through the `resume_from` attachment field when you want to continue from a saved markdown report instead.
 
 ## Maintenance
 

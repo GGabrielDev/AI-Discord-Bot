@@ -61,14 +61,11 @@ Autonomous Discord bot for web research, site crawling, and local knowledge-base
 
 Current codebase includes:
 
-- crash-resume for `/research` and `/chain_research`
+- crash-resume for `/research`, `/chain_research`, and matching interrupted `/ask` runs
 - local-first `/ask` gap routing with deferred gap queue
+- persistent per-topic gap memory across separate `/ask` runs
 - metadata backfill tool for older Chroma collections
 - dual-ingestion storage (`summary` + `raw`)
-
-Known boundary:
-
-- `/ask` does **not** auto-resume after process crash; it resumes through `resume_from` markdown reports
 
 ## Maintenance tools
 

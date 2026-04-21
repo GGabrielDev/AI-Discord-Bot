@@ -42,7 +42,7 @@ async def topic_autocomplete(
     except Exception:
         return []
 
-from agent.checkpoint import load_checkpoint, load_chain_checkpoint, save_chain_checkpoint, delete_chain_checkpoint, request_soft_stop
+from agent.checkpoint import load_checkpoint, load_chain_checkpoint, load_ask_checkpoint, save_chain_checkpoint, delete_chain_checkpoint, request_soft_stop
 from agent.planner import decompose_chain_prompt
 from storage.vectordb import VectorDB
 
@@ -268,13 +268,17 @@ async def ask(interaction: discord.Interaction, topic: str, question: str,
             language: str = "English",
             resume_from: discord.Attachment = None,
             local_only: bool = False):
-    # Acknowledge the command natively - Truncate long questions to stay within Discord's 2000 char limit
-    safe_q = (question[:1500] + '...') if len(question) > 1500 else question
-    await interaction.response.send_message(f"### 🧠 Intelligence Report: {topic}\n> **Q:** {safe_q}\n\n⚙️ **Initializing Agentic Analysis...**")
-    
     # Extract string from choice, default to Balanced
     mode_val = mode.value if mode else "Balanced"
     style_val = style.value if style else "Concise"
+
+    # Acknowledge the command natively - Truncate long questions to stay within Discord's 2000 char limit
+    safe_q = (question[:1500] + '...') if len(question) > 1500 else question
+    existing_ask_checkpoint = None if resume_from else load_ask_checkpoint(topic, question, mode_val, style_val, language, local_only)
+    if existing_ask_checkpoint and existing_ask_checkpoint.get("status") == "in_progress":
+        await interaction.response.send_message(f"### 🧠 Intelligence Report: {topic}\n> **Q:** {safe_q}\n\n⚡ **Resuming Interrupted Ask Session...**")
+    else:
+        await interaction.response.send_message(f"### 🧠 Intelligence Report: {topic}\n> **Q:** {safe_q}\n\n⚙️ **Initializing Agentic Analysis...**")
     
     status_message = None
     async def discord_status_logger(message: str, is_sub_step: bool = False):

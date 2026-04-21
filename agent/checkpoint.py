@@ -15,6 +15,7 @@ Architecture:
 
 import json
 import os
+import hashlib
 from datetime import datetime
 CHECKPOINT_DIR = "checkpoints"
 SOFT_STOP_FLAG = os.path.join(CHECKPOINT_DIR, "SOFT_STOP.flag")
@@ -42,6 +43,20 @@ def _load_json_checkpoint(filepath: str) -> dict | None:
             print(f"[Checkpoint] ⚠️ Ignoring unreadable checkpoint file: {candidate}")
 
     return None
+
+def _atomic_save_json(filepath: str, state: dict):
+    os.makedirs(CHECKPOINT_DIR, exist_ok=True)
+    tmp_path = filepath + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(state, f, indent=2)
+    os.rename(tmp_path, filepath)
+
+def _delete_json_checkpoint(filepath: str):
+    if os.path.exists(filepath):
+        os.remove(filepath)
+    tmp_path = filepath + ".tmp"
+    if os.path.exists(tmp_path):
+        os.remove(tmp_path)
 
 def request_soft_stop():
     """Drops a flag file to request a graceful exit of currently running loops."""
@@ -105,8 +120,6 @@ def save_checkpoint(
         seen_hashes: Content hashes for deduplication
         status: Either 'in_progress' or 'complete'
     """
-    os.makedirs(CHECKPOINT_DIR, exist_ok=True)
-    
     state = {
         "subject": subject,
         "topic": topic,
@@ -122,15 +135,7 @@ def save_checkpoint(
     }
     
     filepath = _checkpoint_path(subject)
-    tmp_path = filepath + ".tmp"
-    
-    # Atomic write: write to .tmp first, then rename.
-    # os.rename() is atomic on POSIX systems (Linux), so even if the process
-    # is killed between the write and rename, the old checkpoint survives intact.
-    with open(tmp_path, "w", encoding="utf-8") as f:
-        json.dump(state, f, indent=2)
-    
-    os.rename(tmp_path, filepath)
+    _atomic_save_json(filepath, state)
     print(f"[Checkpoint] 💾 State saved (iteration {current_iteration}/{max_iterations}, {len(seen_urls)} URLs processed)")
 
 
@@ -168,22 +173,15 @@ def load_checkpoint(subject: str) -> dict | None:
 def delete_checkpoint(subject: str):
     """Removes the checkpoint file for a topic after successful completion."""
     filepath = _checkpoint_path(subject)
-    
-    if os.path.exists(filepath):
-        os.remove(filepath)
+    if os.path.exists(filepath) or os.path.exists(filepath + ".tmp"):
+        _delete_json_checkpoint(filepath)
         print(f"[Checkpoint] 🗑️ Session checkpoint cleaned up (research complete).")
-    
-    # Also clean up any orphaned .tmp files
-    tmp_path = filepath + ".tmp"
-    if os.path.exists(tmp_path):
-        os.remove(tmp_path)
 
 
 # --- MACRO CHAIN CHECKPOINTS ---
 
 def _chain_checkpoint_path(prompt: str) -> str:
     """Returns the filesystem path for a chain checkpoint file based on the initial prompt."""
-    import hashlib
     # Hash the prompt because it can be massive, use as filename
     prompt_hash = hashlib.md5(prompt.encode('utf-8')).hexdigest()
     return os.path.join(CHECKPOINT_DIR, f"chain_{prompt_hash}.json")
@@ -199,8 +197,6 @@ def save_chain_checkpoint(
     status: str = "in_progress"
 ):
     """Atomically saves the overarching chain loop state."""
-    os.makedirs(CHECKPOINT_DIR, exist_ok=True)
-    
     state = {
         "prompt": prompt,
         "save_to": original_topic,
@@ -213,12 +209,7 @@ def save_chain_checkpoint(
     }
     
     filepath = _chain_checkpoint_path(prompt)
-    tmp_path = filepath + ".tmp"
-    
-    with open(tmp_path, "w", encoding="utf-8") as f:
-        json.dump(state, f, indent=2)
-    
-    os.rename(tmp_path, filepath)
+    _atomic_save_json(filepath, state)
     print(f"[Chain Checkpoint] 💾 Master chain state saved (Topic {current_topic_index + 1}/{len(sub_topics)})")
 
 
@@ -247,11 +238,108 @@ def load_chain_checkpoint(prompt: str) -> dict | None:
 def delete_chain_checkpoint(prompt: str):
     """Removes the chain checkpoint file after successful completion."""
     filepath = _chain_checkpoint_path(prompt)
-    
-    if os.path.exists(filepath):
-        os.remove(filepath)
+    if os.path.exists(filepath) or os.path.exists(filepath + ".tmp"):
+        _delete_json_checkpoint(filepath)
         print(f"[Chain Checkpoint] 🗑️ Master chain checkpoint cleaned up (all topics complete).")
-    
-    tmp_path = filepath + ".tmp"
-    if os.path.exists(tmp_path):
-        os.remove(tmp_path)
+
+
+def _ask_checkpoint_path(topic: str, question: str, mode: str, style: str, language: str, no_web: bool) -> str:
+    key = f"{topic}\n{question}\n{mode}\n{style}\n{language}\n{int(no_web)}"
+    digest = hashlib.md5(key.encode("utf-8")).hexdigest()
+    return os.path.join(CHECKPOINT_DIR, f"ask_{digest}.json")
+
+
+def save_ask_checkpoint(
+    topic: str,
+    question: str,
+    mode: str,
+    style: str,
+    language: str,
+    no_web: bool,
+    current_auto_loop: int,
+    draft: str | None,
+    gap_state: dict,
+    extra_context: str | None = None,
+    status: str = "in_progress"
+):
+    state = {
+        "topic": topic,
+        "question": question,
+        "mode": mode,
+        "style": style,
+        "language": language,
+        "no_web": no_web,
+        "current_auto_loop": current_auto_loop,
+        "draft": draft,
+        "gap_state": gap_state,
+        "extra_context": extra_context,
+        "status": status,
+        "last_checkpoint": datetime.now().isoformat()
+    }
+    filepath = _ask_checkpoint_path(topic, question, mode, style, language, no_web)
+    _atomic_save_json(filepath, state)
+    print(f"[Ask Checkpoint] 💾 State saved (loop {current_auto_loop}, topic={topic})")
+
+
+def load_ask_checkpoint(topic: str, question: str, mode: str, style: str, language: str, no_web: bool) -> dict | None:
+    filepath = _ask_checkpoint_path(topic, question, mode, style, language, no_web)
+    if not os.path.exists(filepath) and not os.path.exists(filepath + ".tmp"):
+        return None
+
+    try:
+        state = _load_json_checkpoint(filepath)
+        if state is None:
+            delete_ask_checkpoint(topic, question, mode, style, language, no_web)
+            return None
+        print(f"[Ask Checkpoint] 📂 Found saved ask session for topic '{topic}' at loop {state.get('current_auto_loop', 0)}")
+        return state
+    except (json.JSONDecodeError, KeyError) as e:
+        print(f"[Ask Checkpoint] ⚠️ Corrupted ask checkpoint detected ({e}). Starting fresh.")
+        delete_ask_checkpoint(topic, question, mode, style, language, no_web)
+        return None
+
+
+def delete_ask_checkpoint(topic: str, question: str, mode: str, style: str, language: str, no_web: bool):
+    filepath = _ask_checkpoint_path(topic, question, mode, style, language, no_web)
+    if os.path.exists(filepath) or os.path.exists(filepath + ".tmp"):
+        _delete_json_checkpoint(filepath)
+        print(f"[Ask Checkpoint] 🗑️ Ask checkpoint cleaned up for topic '{topic}'.")
+
+
+def _gap_memory_path(topic: str) -> str:
+    digest = hashlib.md5(topic.encode("utf-8")).hexdigest()
+    return os.path.join(CHECKPOINT_DIR, f"ask_gap_memory_{digest}.json")
+
+
+def save_gap_memory(topic: str, memory: dict):
+    filepath = _gap_memory_path(topic)
+    state = {
+        "topic": topic,
+        "memory": memory,
+        "last_checkpoint": datetime.now().isoformat()
+    }
+    _atomic_save_json(filepath, state)
+    print(f"[Ask Memory] 💾 Gap memory saved for topic '{topic}'.")
+
+
+def load_gap_memory(topic: str) -> dict | None:
+    filepath = _gap_memory_path(topic)
+    if not os.path.exists(filepath) and not os.path.exists(filepath + ".tmp"):
+        return None
+    try:
+        state = _load_json_checkpoint(filepath)
+        if state is None:
+            delete_gap_memory(topic)
+            return None
+        return state.get("memory")
+    except (json.JSONDecodeError, KeyError) as e:
+        print(f"[Ask Memory] ⚠️ Corrupted gap memory detected ({e}). Starting fresh.")
+        delete_gap_memory(topic)
+        return None
+
+
+def delete_gap_memory(topic: str):
+    filepath = _gap_memory_path(topic)
+    if os.path.exists(filepath) or os.path.exists(filepath + ".tmp"):
+        _delete_json_checkpoint(filepath)
+        print(f"[Ask Memory] 🗑️ Gap memory cleared for topic '{topic}'.")

@@ -87,5 +87,6 @@ Checkpoint coverage currently exists for:
 - `/research`
 - `/crawl_site`
 - `/chain_research`
+- `/ask` for matching topic/question/settings reruns
 
-`/ask` does not currently auto-resume after a crash. It resumes through uploaded markdown drafts with `resume_from`.
+`/ask` can also resume from uploaded markdown drafts with `resume_from`.

@@ -30,6 +30,7 @@ Project is in a usable but still evolving state. Core research, crawl, and query
 - checkpoint recovery for `/research`
 - checkpoint recovery for `/crawl_site`
 - checkpoint recovery for `/chain_research`
+- checkpoint recovery for matching `/ask` reruns
 - forced-close checkpoint recovery from `.tmp` files
 - soft-stop flag with `/finish`
 
@@ -38,6 +39,7 @@ Project is in a usable but still evolving state. Core research, crawl, and query
 - capped gap processing per cycle
 - deferred gap queue
 - repeat-aware prioritization
+- persistent gap-routing memory across separate runs
 - local-first confidence-gated routing
 - preservation of partial offline evidence
 - web escalation only when local signal remains weak or repeated
@@ -51,9 +53,9 @@ Project is in a usable but still evolving state. Core research, crawl, and query
 
 ### `/ask`
 
-- no automatic crash-resume checkpoint system
-- resume depends on uploaded markdown draft via `resume_from`
 - gap routing is heuristic-based and should be validated on target data
+- automatic resume expects the same topic/question/settings key
+- `resume_from` remains useful when you want to resume a draft manually or move work between machines
 
 ### Validation
 
@@ -67,9 +69,8 @@ Project is in a usable but still evolving state. Core research, crawl, and query
 ## Recommended next work
 
 1. Add persistent `/ask` checkpointing
-2. Persist gap-state history across separate command invocations
-3. Add automated tests around:
+2. Add automated tests around:
    - checkpoint load/save
    - gap queue ordering
    - metadata backfill behavior
-4. Add deployment docs for target machine service layout
+3. Add deployment docs for target machine service layout

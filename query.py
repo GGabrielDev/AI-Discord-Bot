@@ -1,192 +1,40 @@
 import asyncio
+import argparse
 import re
-import os
 from storage.vectordb import VectorDB
 from llm.client import LocalLLM
-from config.settings import LLM_CONTEXT_WINDOW, SAFE_WORD_BUDGET, LLM_MAX_TOKENS
-from agent.checkpoint import check_soft_stop
+from config.settings import SAFE_WORD_BUDGET, LLM_MAX_TOKENS
+from agent.ask_state import (
+    MAX_GAPS_PER_CYCLE,
+    advance_gap_cycle,
+    build_gap_context,
+    build_gap_memory_snapshot,
+    clamp,
+    dequeue_gap_batch,
+    ensure_gap_state,
+    merge_gap_memory,
+    quality_from_meta,
+    queue_gap_queries,
+    record_gap_probe,
+    record_gap_web_outcome,
+    select_gap_route,
+    set_gap_route,
+    safe_float,
+)
+from agent.checkpoint import (
+    check_soft_stop,
+    delete_ask_checkpoint,
+    load_ask_checkpoint,
+    load_gap_memory,
+    save_ask_checkpoint,
+    save_gap_memory,
+)
 from agent.wiki_builder import store_final_report
 
 # Safety ceiling for context fed to the LLM during /ask synthesis.
 # We utilize a large portion of the SAFE_WORD_BUDGET to allow the model 
 # to 'stretch its legs' with massive context, while reserving room for the R1 <think> block.
 MAX_CONTEXT_WORDS = int(SAFE_WORD_BUDGET * 0.85)
-MAX_GAPS_PER_CYCLE = 3
-LOCAL_RESOLUTION_THRESHOLD = 0.72
-WEB_TRIGGER_THRESHOLD = 0.38
-PARTIAL_CONTEXT_THRESHOLD = 0.28
-LOCAL_RETRY_LIMIT = 2
-WEB_BACKOFF_LOOPS = 2
-FRESHNESS_HINT_PATTERN = re.compile(r"\b(current|latest|recent|today|new|status|202[4-9]|live)\b", re.IGNORECASE)
-
-def _clamp(value: float, low: float = 0.0, high: float = 1.0) -> float:
-    return max(low, min(high, value))
-
-def _safe_float(value, default: float = 0.0) -> float:
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return default
-
-def _normalize_gap_query(query: str) -> str:
-    """Normalizes a gap query so repeats can be tracked across refinement cycles."""
-    return re.sub(r"\s+", " ", re.sub(r"[^\w\s:/.-]", " ", query.lower())).strip()
-
-def _ensure_gap_state(gap_state: dict | None) -> dict:
-    """Initializes the deferred gap queue used across recursive ask cycles."""
-    if gap_state is None:
-        return {"pending": {}, "order": [], "repeat_counts": {}, "details": {}, "loop_index": 0}
-    gap_state.setdefault("pending", {})
-    gap_state.setdefault("order", [])
-    gap_state.setdefault("repeat_counts", {})
-    gap_state.setdefault("details", {})
-    gap_state.setdefault("loop_index", 0)
-    return gap_state
-
-def _advance_gap_cycle(gap_state: dict, current_loop: int) -> dict:
-    gap_state["loop_index"] = max(gap_state.get("loop_index", 0), current_loop)
-    return gap_state
-
-def _ensure_gap_meta(gap_state: dict, normalized: str, gap_query: str) -> dict:
-    details = gap_state["details"]
-    gap_meta = details.get(normalized)
-    if gap_meta is None:
-        gap_meta = {
-            "query": gap_query,
-            "repeat_count": 0,
-            "local_attempts": 0,
-            "web_attempts": 0,
-            "last_confidence": 0.0,
-            "last_llm_confidence": 0.0,
-            "last_route": "new",
-            "last_resolution": "unseen",
-            "last_source_count": 0,
-            "last_raw_hits": 0,
-            "last_summary_hits": 0,
-            "local_evidence": "",
-            "cooldown_until_loop": 0
-        }
-        details[normalized] = gap_meta
-
-    if len(gap_query) > len(gap_meta.get("query", "")):
-        gap_meta["query"] = gap_query
-
-    gap_meta["repeat_count"] = gap_state["repeat_counts"].get(normalized, 0)
-    return gap_meta
-
-def _queue_gap_queries(gap_state: dict, gap_queries: list[str]) -> dict:
-    """Adds new gap queries to the deferred queue and increments repeat counts."""
-    pending = gap_state["pending"]
-    order = gap_state["order"]
-    repeat_counts = gap_state["repeat_counts"]
-
-    for gap_query in gap_queries:
-        normalized = _normalize_gap_query(gap_query)
-        if not normalized:
-            continue
-
-        repeat_counts[normalized] = repeat_counts.get(normalized, 0) + 1
-        gap_meta = _ensure_gap_meta(gap_state, normalized, gap_query)
-        gap_meta["repeat_count"] = repeat_counts[normalized]
-        best_query = pending.get(normalized)
-        if best_query is None or len(gap_query) > len(best_query):
-            pending[normalized] = gap_query
-        if normalized not in order:
-            order.append(normalized)
-
-    return gap_state
-
-def _dequeue_gap_batch(gap_state: dict, limit: int = MAX_GAPS_PER_CYCLE) -> tuple[list[str], int]:
-    """Returns highest-priority gaps for this cycle and keeps the rest deferred."""
-    order = gap_state["order"]
-    if not order:
-        return [], 0
-
-    pending = gap_state["pending"]
-    repeat_counts = gap_state["repeat_counts"]
-    details = gap_state["details"]
-    loop_index = gap_state.get("loop_index", 0)
-    order_index = {gap_key: idx for idx, gap_key in enumerate(order)}
-    ranked_keys = sorted(
-        order,
-        key=lambda gap_key: (
-            1 if details.get(gap_key, {}).get("cooldown_until_loop", 0) > loop_index else 0,
-            -1 if details.get(gap_key, {}).get("last_route") == "needs_web" else 0,
-            -repeat_counts.get(gap_key, 0),
-            -1 if details.get(gap_key, {}).get("last_route") == "partial_local" else 0,
-            order_index[gap_key]
-        )
-    )
-
-    selected_keys = ranked_keys[:limit]
-    remaining_keys = ranked_keys[limit:]
-    selected_queries = [pending[gap_key] for gap_key in selected_keys]
-
-    gap_state["pending"] = {gap_key: pending[gap_key] for gap_key in remaining_keys}
-    gap_state["order"] = remaining_keys
-    return selected_queries, len(remaining_keys)
-
-def _quality_from_meta(meta: dict) -> float:
-    explicit_score = _safe_float(meta.get("source_quality_score"), -1.0)
-    if explicit_score >= 0:
-        return _clamp(explicit_score)
-
-    has_raw = _safe_float(meta.get("source_has_raw"), 1.0 if meta.get("chunk_type") == "raw" else 0.0)
-    has_summary = _safe_float(meta.get("source_has_summary"), 1.0 if meta.get("chunk_type") == "summary" else 0.0)
-    total_chunks = _safe_float(meta.get("source_total_chunks"), meta.get("total_chunks", 1))
-    coverage_score = min(total_chunks, 8.0) / 8.0
-    return _clamp(0.2 + (0.25 * has_raw) + (0.25 * has_summary) + (0.3 * coverage_score))
-
-def _is_freshness_gap(gap_query: str) -> bool:
-    return bool(FRESHNESS_HINT_PATTERN.search(gap_query))
-
-def _record_gap_probe(gap_state: dict, gap_query: str, probe: dict, current_loop: int) -> dict:
-    normalized = _normalize_gap_query(gap_query)
-    gap_meta = _ensure_gap_meta(gap_state, normalized, gap_query)
-    gap_meta["local_attempts"] += 1
-    gap_meta["last_confidence"] = round(probe["local_score"], 3)
-    gap_meta["last_llm_confidence"] = round(probe["llm_confidence"], 3)
-    gap_meta["last_source_count"] = probe["source_count"]
-    gap_meta["last_raw_hits"] = probe["raw_hits"]
-    gap_meta["last_summary_hits"] = probe["summary_hits"]
-    gap_meta["local_evidence"] = probe["answer"][:2000] if probe["answer"] else ""
-    gap_meta["last_seen_loop"] = current_loop
-    return gap_meta
-
-def _set_gap_route(gap_meta: dict, route: str, current_loop: int, cooldown_loops: int = 0):
-    gap_meta["last_route"] = route
-    gap_meta["last_resolution"] = route
-    gap_meta["cooldown_until_loop"] = current_loop + cooldown_loops
-
-def _select_gap_route(gap_meta: dict, probe: dict, no_web: bool) -> str:
-    if probe["resolved"] and probe["local_score"] >= LOCAL_RESOLUTION_THRESHOLD:
-        return "resolved_local"
-    if no_web:
-        return "blocked_offline"
-    if _is_freshness_gap(gap_meta["query"]) and probe["local_score"] < LOCAL_RESOLUTION_THRESHOLD:
-        return "needs_web"
-    if probe["total_hits"] == 0 or probe["local_score"] < WEB_TRIGGER_THRESHOLD:
-        return "needs_web"
-    if gap_meta["local_attempts"] >= LOCAL_RETRY_LIMIT and probe["local_score"] < LOCAL_RESOLUTION_THRESHOLD:
-        return "needs_web"
-    if probe["has_partial_answer"] or probe["local_score"] >= PARTIAL_CONTEXT_THRESHOLD:
-        return "partial_local"
-    return "defer_local"
-
-def _record_gap_web_outcome(gap_meta: dict, current_loop: int, sources_added: int, failed: bool = False):
-    gap_meta["web_attempts"] += 1
-    gap_meta["last_web_sources_added"] = sources_added
-    if failed or sources_added <= 0:
-        _set_gap_route(gap_meta, "needs_web", current_loop, WEB_BACKOFF_LOOPS)
-        gap_meta["last_resolution"] = "web_exhausted"
-        return
-    _set_gap_route(gap_meta, "needs_web", current_loop, 1)
-    gap_meta["last_resolution"] = "web_enriched"
-
-def _build_gap_context(gap_query: str, probe: dict) -> str:
-    if not probe.get("answer"):
-        return ""
-    return f"LOCAL EVIDENCE FOR '{gap_query}':\n{probe['answer']}"
 
 def fit_to_context_budget(system_prompt: str, user_prompt: str, max_words: int) -> tuple[str, str]:
     """Ensures total words across system and user prompts stay within max_words.
@@ -356,7 +204,7 @@ async def deep_internal_probe(db: VectorDB, llm: LocalLLM, gap_query: str, mode:
                 raw_hits += 1
             elif meta.get("chunk_type") == "summary":
                 summary_hits += 1
-            quality_values.append(_quality_from_meta(meta))
+            quality_values.append(quality_from_meta(meta))
             if distance is not None:
                 distance_values.append(distance)
         if len(unique_knowledge) >= max_chunks: break # Dynamic Cap
@@ -380,14 +228,14 @@ async def deep_internal_probe(db: VectorDB, llm: LocalLLM, gap_query: str, mode:
     
     await log(f"🧠 *Evaluating {len(unique_knowledge)} internal matches for a native solution...*")
     result = await llm.generate_json(system_prompt, user_prompt)
-    llm_confidence = _safe_float(result.get("confidence"), 0.0) if result else 0.0
+    llm_confidence = safe_float(result.get("confidence"), 0.0) if result else 0.0
     avg_quality = sum(quality_values) / len(quality_values) if quality_values else 0.0
     avg_distance = sum(distance_values) / len(distance_values) if distance_values else 1.0
     source_count = len(sources)
     source_diversity = min(1.0, source_count / 4)
     raw_support = min(1.0, raw_hits / 6)
     summary_support = min(1.0, summary_hits / 6)
-    local_score = _clamp(
+    local_score = clamp(
         (llm_confidence * 0.45) +
         (raw_support * 0.2) +
         (summary_support * 0.1) +
@@ -468,16 +316,6 @@ async def answer_question(topic: str, question: str, mode: str = "Balanced", sty
     # Import here to avoid circular imports if query.py is loaded first
     from agent.loop import run_autonomous_loop
     
-    db = VectorDB(collection_name=topic)
-    llm = LocalLLM()
-    gap_state = _advance_gap_cycle(_ensure_gap_state(_gap_state), _current_auto_loop)
-    
-    # Mode Constraints
-    mode_limits = {"Fast": 0, "Balanced": 1, "Thorough": 3, "Omniscient": 999}
-    max_auto_loops = mode_limits.get(mode, 1)
-    if no_web: 
-        max_auto_loops = 0
-    
     # Global logging helper for this session
     async def log(msg: str, is_sub_step: bool = False):
         print(msg)
@@ -486,16 +324,70 @@ async def answer_question(topic: str, question: str, mode: str = "Balanced", sty
         else:
             print(f"[Query] {msg}")
 
+    resumed_ask = False
+    loaded_memory = load_gap_memory(topic)
+    gap_state = merge_gap_memory(advance_gap_cycle(ensure_gap_state(_gap_state), _current_auto_loop), loaded_memory)
+
+    if _current_auto_loop == 0 and _draft is None and _gap_state is None:
+        ask_checkpoint = load_ask_checkpoint(topic, question, mode, style, language, no_web)
+        if ask_checkpoint and ask_checkpoint.get("status") == "in_progress":
+            resumed_ask = True
+            _draft = ask_checkpoint.get("draft")
+            _extra_context = ask_checkpoint.get("extra_context") or _extra_context
+            gap_state = merge_gap_memory(gap_state, ask_checkpoint.get("gap_state"))
+            gap_state = advance_gap_cycle(gap_state, ask_checkpoint.get("current_auto_loop", 0))
+            await log("⚡ **Resuming interrupted /ask session.** Restoring saved draft and gap state...")
+
+    db = VectorDB(collection_name=topic)
+    llm = LocalLLM()
+    
+    # Mode Constraints
+    mode_limits = {"Fast": 0, "Balanced": 1, "Thorough": 3, "Omniscient": 999}
+    max_auto_loops = mode_limits.get(mode, 1)
+    if no_web: 
+        max_auto_loops = 0
+
+    def persist_gap_history():
+        save_gap_memory(topic, build_gap_memory_snapshot(gap_state))
+
+    def persist_ask_state(draft_text: str | None, extra_context: str | None = None):
+        save_ask_checkpoint(
+            topic=topic,
+            question=question,
+            mode=mode,
+            style=style,
+            language=language,
+            no_web=no_web,
+            current_auto_loop=_current_auto_loop,
+            draft=draft_text,
+            gap_state=gap_state,
+            extra_context=extra_context
+        )
+        persist_gap_history()
+
+    def clear_ask_state():
+        delete_ask_checkpoint(topic, question, mode, style, language, no_web)
+        persist_gap_history()
+
+    if _current_auto_loop == 0:
+        persist_ask_state(_draft, _extra_context)
+
     # --- Resume Shortcut ---
     # If a draft is provided at the start, skip redundant broad searches 
     # and jump straight to gap extraction.
     if _draft and _current_auto_loop == 0:
-        await log("📦 **Resuming from provided report.** Parsing knowledge gaps...")
-        gap_queries = await extract_gap_queries(llm, _draft)
-        gap_state = _queue_gap_queries(gap_state, gap_queries)
-        queued_gap_count = len(gap_state["order"])
+        if resumed_ask and gap_state["order"]:
+            await log("📦 **Resuming from saved /ask checkpoint.** Continuing pending gap queue...")
+            queued_gap_count = len(gap_state["order"])
+        else:
+            await log("📦 **Resuming from provided report.** Parsing knowledge gaps...")
+            gap_queries = await extract_gap_queries(llm, _draft)
+            gap_state = queue_gap_queries(gap_state, gap_queries)
+            queued_gap_count = len(gap_state["order"])
+
         if queued_gap_count:
-            gap_batch, deferred_gap_count = _dequeue_gap_batch(gap_state)
+            gap_batch, deferred_gap_count = dequeue_gap_batch(gap_state)
+            persist_ask_state(_draft, _extra_context)
             await log(
                 f"🎯 **Queued {queued_gap_count} resumed gaps. Processing {len(gap_batch)} now; {deferred_gap_count} deferred.**",
                 is_sub_step=True
@@ -511,27 +403,27 @@ async def answer_question(topic: str, question: str, mode: str = "Balanced", sty
                 if check_soft_stop(): break
                 await loc_log(f"🔎 *Targeting Gap {idx+1}/{len(gap_batch)}:* `{gap_query}`")
                 probe = await deep_internal_probe(db, llm, gap_query, mode, log_func=log_func)
-                gap_meta = _record_gap_probe(gap_state, gap_query, probe, _current_auto_loop)
-                route = _select_gap_route(gap_meta, probe, no_web)
+                gap_meta = record_gap_probe(gap_state, gap_query, probe, _current_auto_loop)
+                route = select_gap_route(gap_meta, probe, no_web)
                 
-                sip_context = _build_gap_context(gap_query, probe)
+                sip_context = build_gap_context(gap_query, probe)
                 if route == "resolved_local":
-                    _set_gap_route(gap_meta, route, _current_auto_loop)
+                    set_gap_route(gap_meta, route, _current_auto_loop)
                     await loc_log(
                         f"✅ **SIP MATCH:** Strong local evidence ({probe['local_score']:.2f}) from {probe['source_count']} sources. Web skipped.",
                         is_sub_step=True
                     )
                 elif route == "partial_local":
-                    _set_gap_route(gap_meta, route, _current_auto_loop, 1)
+                    set_gap_route(gap_meta, route, _current_auto_loop, 1)
                     await loc_log(
                         f"🧩 **Partial local evidence retained** ({probe['local_score']:.2f}). Deferring web unless gap repeats.",
                         is_sub_step=True
                     )
                 elif route == "blocked_offline":
-                    _set_gap_route(gap_meta, route, _current_auto_loop, 1)
+                    set_gap_route(gap_meta, route, _current_auto_loop, 1)
                     await loc_log(f"⚠️ **Local-Only Mode:** Holding unresolved gap `{gap_query}` for offline evidence only.", is_sub_step=True)
                 elif route == "defer_local":
-                    _set_gap_route(gap_meta, route, _current_auto_loop, 1)
+                    set_gap_route(gap_meta, route, _current_auto_loop, 1)
                     await loc_log(
                         f"⏸️ **Weak but non-zero local signal** ({probe['local_score']:.2f}). Deferring before web escalation.",
                         is_sub_step=True
@@ -548,7 +440,8 @@ async def answer_question(topic: str, question: str, mode: str = "Balanced", sty
                     except Exception as e:
                         web_failed = True
                         await loc_log(f"🚨 Sub-tracker failed on `{gap_query}`: {e}")
-                    _record_gap_web_outcome(gap_meta, _current_auto_loop, web_sources_added, web_failed)
+                    record_gap_web_outcome(gap_meta, _current_auto_loop, web_sources_added, web_failed)
+                    persist_ask_state(_draft, sip_context)
                 
                 # Recursive call to update the draft with info from this gap
                 answer = await answer_question(
@@ -571,9 +464,12 @@ async def answer_question(topic: str, question: str, mode: str = "Balanced", sty
                 if isinstance(answer, dict) and _current_auto_loop != 0:
                     return answer["english"]
                 _draft = answer
+                persist_ask_state(_draft, sip_context)
                 
             if _current_auto_loop == 0:
-                return await finalize_dual_report(llm, _draft, topic, language, mode, check_soft_stop())
+                result = await finalize_dual_report(llm, _draft, topic, language, mode, check_soft_stop())
+                clear_ask_state()
+                return result
             return _draft
         else:
             await log("💡 **Resumed report appears complete.** No new gaps identified.")
@@ -636,6 +532,8 @@ async def answer_question(topic: str, question: str, mode: str = "Balanced", sty
     if not scout_results:
         msg = "⚠️ No relevant information found in the database. Have you run the `/research` or `/crawl_site` command for this topic yet?"
         await log(msg)
+        if _current_auto_loop == 0:
+            clear_ask_state()
         return msg
 
     # 3. Stage 2: The Scavenge (Targeted Raw Extraction)
@@ -780,6 +678,7 @@ async def answer_question(topic: str, question: str, mode: str = "Balanced", sty
 
     # Use default LLM_TIMEOUT from .env (no hardcoded override)
     answer = await llm.generate_text(system_prompt, user_prompt, temperature=0.3, max_tokens=LLM_MAX_TOKENS)
+    persist_ask_state(answer, _extra_context)
     
     # 5. End if Fast mode or max auto-loops hit
     is_interrupted = check_soft_stop()
@@ -791,12 +690,15 @@ async def answer_question(topic: str, question: str, mode: str = "Balanced", sty
         # If this is the TOP-LEVEL call (loop 0), return the dual-language dict.
         # If it's a recursive call, return the EN string for continued refinement.
         if _current_auto_loop == 0:
-            return await finalize_dual_report(llm, answer, topic, language, mode, is_interrupted)
+            result = await finalize_dual_report(llm, answer, topic, language, mode, is_interrupted)
+            clear_ask_state()
+            return result
         return answer
         
     # 6. Extract Gaps and Agentic RAG Re-research
     gap_queries = await extract_gap_queries(llm, answer)
-    gap_state = _queue_gap_queries(gap_state, gap_queries)
+    gap_state = queue_gap_queries(gap_state, gap_queries)
+    persist_ask_state(answer, _extra_context)
     
     async def loc_log(m, is_sub_step=False):
         print(m)
@@ -808,7 +710,7 @@ async def answer_question(topic: str, question: str, mode: str = "Balanced", sty
         if draft_callback:
             await draft_callback(answer, _current_auto_loop)
 
-        gap_batch, deferred_gap_count = _dequeue_gap_batch(gap_state)
+        gap_batch, deferred_gap_count = dequeue_gap_batch(gap_state)
         await loc_log(f"⚠️ **Knowledge Gaps detected.** Auto-initiating targeted research loop (Iteration {_current_auto_loop + 1}/{max_auto_loops if max_auto_loops < 999 else '∞'})...")
         if gap_queries:
             await loc_log(
@@ -832,27 +734,27 @@ async def answer_question(topic: str, question: str, mode: str = "Balanced", sty
             # --- TASK: DEEP SEMANTIC INTERNAL PROBING (SIP) ---
             # We try to solve the gap using what we HAVE before hitting the web
             probe = await deep_internal_probe(db, llm, gap_query, mode, log_func=log_func)
-            gap_meta = _record_gap_probe(gap_state, gap_query, probe, _current_auto_loop)
-            route = _select_gap_route(gap_meta, probe, no_web)
+            gap_meta = record_gap_probe(gap_state, gap_query, probe, _current_auto_loop)
+            route = select_gap_route(gap_meta, probe, no_web)
             
-            sip_context = _build_gap_context(gap_query, probe)
+            sip_context = build_gap_context(gap_query, probe)
             if route == "resolved_local":
-                _set_gap_route(gap_meta, route, _current_auto_loop)
+                set_gap_route(gap_meta, route, _current_auto_loop)
                 await loc_log(
                     f"✅ **SIP MATCH:** Strong local evidence ({probe['local_score']:.2f}) from {probe['source_count']} sources. Web skipped.",
                     is_sub_step=True
                 )
             elif route == "partial_local":
-                _set_gap_route(gap_meta, route, _current_auto_loop, 1)
+                set_gap_route(gap_meta, route, _current_auto_loop, 1)
                 await loc_log(
                     f"🧩 **Partial local evidence retained** ({probe['local_score']:.2f}). Deferring web unless gap repeats.",
                     is_sub_step=True
                 )
             elif route == "blocked_offline":
-                _set_gap_route(gap_meta, route, _current_auto_loop, 1)
+                set_gap_route(gap_meta, route, _current_auto_loop, 1)
                 await loc_log(f"⚠️ **Local-Only Mode:** Holding unresolved gap for offline evidence only.", is_sub_step=True)
             elif route == "defer_local":
-                _set_gap_route(gap_meta, route, _current_auto_loop, 1)
+                set_gap_route(gap_meta, route, _current_auto_loop, 1)
                 await loc_log(
                     f"⏸️ **Weak but non-zero local signal** ({probe['local_score']:.2f}). Deferring before web escalation.",
                     is_sub_step=True
@@ -875,7 +777,8 @@ async def answer_question(topic: str, question: str, mode: str = "Balanced", sty
                 except Exception as e:
                     web_failed = True
                     await loc_log(f"🚨 Sub-tracker failed on `{gap_query}`: {e}")
-                _record_gap_web_outcome(gap_meta, _current_auto_loop, web_sources_added, web_failed)
+                record_gap_web_outcome(gap_meta, _current_auto_loop, web_sources_added, web_failed)
+                persist_ask_state(answer, sip_context)
 
             answer = await answer_question(
                 topic=topic,
@@ -891,11 +794,16 @@ async def answer_question(topic: str, question: str, mode: str = "Balanced", sty
                 _extra_context=sip_context,
                 _gap_state=gap_state
             )
+            persist_ask_state(answer if not isinstance(answer, dict) else answer.get("english"), sip_context)
     
     # Final Guard: Ensure loop 0 always returns the Dual Report Dict
     if _current_auto_loop == 0:
-        if isinstance(answer, dict): return answer
-        return await finalize_dual_report(llm, answer, topic, language, mode, check_soft_stop())
+        if isinstance(answer, dict):
+            clear_ask_state()
+            return answer
+        result = await finalize_dual_report(llm, answer, topic, language, mode, check_soft_stop())
+        clear_ask_state()
+        return result
     
     # Recursive layers just return the EN string
     if isinstance(answer, dict): return answer["english"]
