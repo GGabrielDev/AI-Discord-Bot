@@ -26,6 +26,9 @@ SAFE_WORD_BUDGET = int(LLM_CONTEXT_WINDOW * 0.75 * 0.8)
 
 # --- Search Settings ---
 SEARXNG_URL = os.getenv("SEARXNG_URL", "http://localhost:8081")
+HTTP_MAX_CONNECTIONS = int(os.getenv("HTTP_MAX_CONNECTIONS", "20"))
+HTTP_MAX_KEEPALIVE_CONNECTIONS = int(os.getenv("HTTP_MAX_KEEPALIVE_CONNECTIONS", "10"))
+HTTP_KEEPALIVE_EXPIRY = int(os.getenv("HTTP_KEEPALIVE_EXPIRY", "30"))
 
 # --- Storage Settings ---
 # Defaults to a folder named 'chroma_data' in your project root

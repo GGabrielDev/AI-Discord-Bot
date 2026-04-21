@@ -2,6 +2,11 @@ import httpx
 from bs4 import BeautifulSoup
 import tempfile
 import os
+from config.settings import (
+    HTTP_MAX_CONNECTIONS,
+    HTTP_MAX_KEEPALIVE_CONNECTIONS,
+    HTTP_KEEPALIVE_EXPIRY,
+)
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -10,6 +15,35 @@ HEADERS = {
 # 10MB limit for HTML, 150MB limit for PDFs
 MAX_HTML_SIZE = 10 * 1024 * 1024
 MAX_PDF_SIZE = 150 * 1024 * 1024
+_scraper_client = None
+
+
+def _scraper_limits() -> httpx.Limits:
+    return httpx.Limits(
+        max_connections=HTTP_MAX_CONNECTIONS,
+        max_keepalive_connections=HTTP_MAX_KEEPALIVE_CONNECTIONS,
+        keepalive_expiry=HTTP_KEEPALIVE_EXPIRY,
+    )
+
+
+def _get_scraper_client() -> httpx.AsyncClient:
+    global _scraper_client
+    if _scraper_client is None:
+        _scraper_client = httpx.AsyncClient(
+            headers=HEADERS,
+            timeout=20,
+            follow_redirects=True,
+            http2=True,
+            limits=_scraper_limits(),
+        )
+    return _scraper_client
+
+
+async def close_scraper_client():
+    global _scraper_client
+    if _scraper_client is not None:
+        await _scraper_client.aclose()
+        _scraper_client = None
 
 async def scrape_text_from_url(url: str, timeout: int = 15, log_func=None) -> str:
     """Safely streams a URL, checks content type, and extracts pure readable text or PDF markdown."""
@@ -28,24 +62,24 @@ async def _scrape_core(url: str, timeout: int, log_func, want_links: bool) -> an
     await log(f"[Scraper] Connecting to: {url}")
     
     try:
-        async with httpx.AsyncClient(headers=HEADERS, timeout=timeout, follow_redirects=True, http2=True) as client:
-            async with client.stream("GET", url) as response:
-                response.raise_for_status()
+        client = _get_scraper_client()
+        async with client.stream("GET", url, timeout=timeout) as response:
+            response.raise_for_status()
+            
+            content_type = response.headers.get("Content-Type", "").lower()
+            
+            if "application/pdf" in content_type:
+                await log(f"[Scraper] 📄 PDF detected. Initiating secure stream...")
+                text = await _stream_and_process_pdf(response, log)
+                return (text, []) if want_links else text
+            
+            elif "text/html" in content_type or "text/plain" in content_type:
+                await log(f"[Scraper] 🌐 HTML text detected. Initiating secure stream...")
+                return await _stream_and_process_html(response, log, want_links, base_url=str(response.url))
                 
-                content_type = response.headers.get("Content-Type", "").lower()
-                
-                if "application/pdf" in content_type:
-                    await log(f"[Scraper] 📄 PDF detected. Initiating secure stream...")
-                    text = await _stream_and_process_pdf(response, log)
-                    return (text, []) if want_links else text
-                
-                elif "text/html" in content_type or "text/plain" in content_type:
-                    await log(f"[Scraper] 🌐 HTML text detected. Initiating secure stream...")
-                    return await _stream_and_process_html(response, log, want_links, base_url=str(response.url))
-                    
-                else:
-                    await log(f"[Scraper] ⚠️ Unsupported content type skipped: {content_type}")
-                    return ("", []) if want_links else ""
+            else:
+                await log(f"[Scraper] ⚠️ Unsupported content type skipped: {content_type}")
+                return ("", []) if want_links else ""
                     
     except httpx.TimeoutException:
         await log(f"[Scraper] Warning: Timed out waiting for {url}")

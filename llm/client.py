@@ -14,20 +14,29 @@ class LocalLLM:
     - Timeout handling for slow/overloaded servers
     """
     
+    _shared_client = None
+    _client_signature = None
+    _init_logged = False
+    _total_prompt_tokens = 0
+    _total_completion_tokens = 0
+
     def __init__(self):
-        self.client = AsyncOpenAI(
-            base_url=LLM_API_BASE,
-            api_key=LLM_API_KEY,
-            timeout=LLM_TIMEOUT
-        )
+        signature = (LLM_API_BASE, LLM_API_KEY, LLM_TIMEOUT)
+        if LocalLLM._shared_client is None or LocalLLM._client_signature != signature:
+            LocalLLM._shared_client = AsyncOpenAI(
+                base_url=LLM_API_BASE,
+                api_key=LLM_API_KEY,
+                timeout=LLM_TIMEOUT
+            )
+            LocalLLM._client_signature = signature
+
+        self.client = LocalLLM._shared_client
         self.model = LLM_MODEL_NAME
         self.default_max_tokens = LLM_MAX_TOKENS
         
-        # Diagnostic logging to verify .env loading
-        print(f"[LLM] Client initialized. Model: {self.model} | Global Timeout: {LLM_TIMEOUT}s")
-        # Running token counters for the current bot session
-        self._total_prompt_tokens = 0
-        self._total_completion_tokens = 0
+        if not LocalLLM._init_logged:
+            print(f"[LLM] Shared client initialized. Model: {self.model} | Global Timeout: {LLM_TIMEOUT}s")
+            LocalLLM._init_logged = True
     
     def _log_usage(self, response, label: str = ""):
         """Extracts and logs token usage from an OpenAI-compatible API response."""
@@ -35,14 +44,22 @@ class LocalLLM:
         if usage:
             prompt_tok = getattr(usage, 'prompt_tokens', 0) or 0
             completion_tok = getattr(usage, 'completion_tokens', 0) or 0
-            self._total_prompt_tokens += prompt_tok
-            self._total_completion_tokens += completion_tok
-            total_session = self._total_prompt_tokens + self._total_completion_tokens
+            LocalLLM._total_prompt_tokens += prompt_tok
+            LocalLLM._total_completion_tokens += completion_tok
+            total_session = LocalLLM._total_prompt_tokens + LocalLLM._total_completion_tokens
             print(
                 f"[LLM] {label}Tokens: {prompt_tok:,} in → {completion_tok:,} out "
                 f"| Session total: {total_session:,}"
             )
-            
+
+    @classmethod
+    async def aclose(cls):
+        if cls._shared_client is not None:
+            await cls._shared_client.close()
+            cls._shared_client = None
+            cls._client_signature = None
+            cls._init_logged = False
+    
     def _clean_thinking(self, text: str) -> str:
         """Strips reasoning blocks like <think>...</think> often found in DeepSeek-R1 responses."""
         if not text:

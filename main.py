@@ -9,6 +9,9 @@ from agent.crawler import run_focused_crawler
 from agent.wiki_builder import generate_index_page
 from query import answer_question
 from config.settings import DISCORD_TOKEN, CHROMA_DB_PATH
+from llm.client import LocalLLM
+from tools.search import close_search_client
+from tools.scraper import close_scraper_client
 
 # --- Setup ---
 class ResearchBot(commands.Bot):
@@ -21,6 +24,12 @@ class ResearchBot(commands.Bot):
         # This is where we could load extensions, 
         # but for now we just prepare the tree.
         print("🔧 Setup hook active. Slash commands are ready to sync.")
+
+    async def close(self):
+        await close_search_client()
+        await close_scraper_client()
+        await LocalLLM.aclose()
+        await super().close()
 
 bot = ResearchBot()
 

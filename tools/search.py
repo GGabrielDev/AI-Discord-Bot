@@ -1,5 +1,34 @@
 import httpx
-from config.settings import SEARXNG_URL
+from config.settings import (
+    SEARXNG_URL,
+    HTTP_MAX_CONNECTIONS,
+    HTTP_MAX_KEEPALIVE_CONNECTIONS,
+    HTTP_KEEPALIVE_EXPIRY,
+)
+
+_search_client = None
+
+
+def _search_limits() -> httpx.Limits:
+    return httpx.Limits(
+        max_connections=HTTP_MAX_CONNECTIONS,
+        max_keepalive_connections=HTTP_MAX_KEEPALIVE_CONNECTIONS,
+        keepalive_expiry=HTTP_KEEPALIVE_EXPIRY,
+    )
+
+
+def _get_search_client() -> httpx.AsyncClient:
+    global _search_client
+    if _search_client is None:
+        _search_client = httpx.AsyncClient(timeout=15, limits=_search_limits())
+    return _search_client
+
+
+async def close_search_client():
+    global _search_client
+    if _search_client is not None:
+        await _search_client.aclose()
+        _search_client = None
 
 async def get_search_results(query: str, max_results: int = 5) -> list[dict]:
     """Uses local SearXNG to find URLs for a given search query.
@@ -15,10 +44,9 @@ async def get_search_results(query: str, max_results: int = 5) -> list[dict]:
             "format": "json"
         }
         
-        # Generous 15-second timeout since SearXNG aggregates across multiple engines
-        async with httpx.AsyncClient(timeout=15) as client:
-            response = await client.get(f"{SEARXNG_URL}/search", params=params)
-            response.raise_for_status()
+        client = _get_search_client()
+        response = await client.get(f"{SEARXNG_URL}/search", params=params)
+        response.raise_for_status()
             
         data = response.json()
         results = data.get("results", [])
