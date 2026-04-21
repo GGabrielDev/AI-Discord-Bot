@@ -16,6 +16,24 @@ from agent.ask_state import (
 
 
 class AskStateTests(unittest.TestCase):
+    def test_queue_semantic_duplicates_merge_and_sum_weights(self):
+        state = ensure_gap_state(None)
+        queue_gap_queries(state, [
+            "deployment status",
+            "latest deployment status",
+            "What is the latest deployment status?",
+            "battery chemistry note",
+        ])
+
+        self.assertEqual(state["order"], ["deployment status", "battery chemistry note"])
+        self.assertEqual(state["repeat_counts"]["deployment status"], 3)
+        self.assertEqual(state["pending"]["deployment status"], "What is the latest deployment status?")
+        self.assertEqual(state["details"]["deployment status"]["repeat_count"], 3)
+
+        batch, deferred = dequeue_gap_batch(state, limit=1)
+        self.assertEqual(batch, ["What is the latest deployment status?"])
+        self.assertEqual(deferred, 1)
+
     def test_queue_prioritizes_needs_web_then_repeats(self):
         state = advance_gap_cycle(ensure_gap_state(None), 3)
         queue_gap_queries(state, [
@@ -84,6 +102,40 @@ class AskStateTests(unittest.TestCase):
         self.assertEqual(merged["repeat_counts"]["legacy chemistry detail"], 4)
         self.assertEqual(merged["details"]["legacy chemistry detail"]["last_route"], "partial_local")
 
+    def test_merge_gap_memory_semantic_duplicates_sum_repeat_counts(self):
+        merged = merge_gap_memory(ensure_gap_state(None), {
+            "pending": {
+                "deployment status": "deployment status",
+                "latest deployment status": "latest deployment status",
+            },
+            "order": ["deployment status", "latest deployment status"],
+            "repeat_counts": {
+                "deployment status": 2,
+                "latest deployment status": 3,
+            },
+            "details": {
+                "deployment status": {
+                    "query": "deployment status",
+                    "repeat_count": 2,
+                    "last_route": "partial_local",
+                    "last_resolution": "partial_local",
+                },
+                "latest deployment status": {
+                    "query": "What is the latest deployment status?",
+                    "repeat_count": 3,
+                    "last_route": "needs_web",
+                    "last_resolution": "needs_web",
+                },
+            },
+        })
+
+        self.assertEqual(merged["order"], ["deployment status"])
+        self.assertEqual(merged["repeat_counts"]["deployment status"], 5)
+        self.assertEqual(merged["pending"]["deployment status"], "What is the latest deployment status?")
+        self.assertEqual(merged["details"]["deployment status"]["query"], "What is the latest deployment status?")
+        self.assertEqual(merged["details"]["deployment status"]["repeat_count"], 5)
+        self.assertEqual(merged["details"]["deployment status"]["last_route"], "needs_web")
+
     def test_restore_gap_batch_requeues_without_bumping_repeat_counts(self):
         state = ensure_gap_state(None)
         queue_gap_queries(state, ["gap one", "gap two", "gap three"])
@@ -95,6 +147,27 @@ class AskStateTests(unittest.TestCase):
         restore_gap_batch(state, ["gap two"])
         self.assertEqual(state["order"], ["gap two", "gap three"])
         self.assertEqual(state["repeat_counts"]["gap two"], 1)
+
+    def test_record_gap_probe_reuses_semantic_gap_key(self):
+        state = ensure_gap_state(None)
+        queue_gap_queries(state, ["deployment status"])
+        probe = {
+            "answer": "",
+            "resolved": False,
+            "llm_confidence": 0.2,
+            "local_score": 0.3,
+            "source_count": 1,
+            "raw_hits": 1,
+            "summary_hits": 0,
+            "total_hits": 1,
+            "has_partial_answer": False,
+        }
+
+        gap_meta = record_gap_probe(state, "What is the latest deployment status?", probe, 2)
+
+        self.assertEqual(list(state["details"].keys()), ["deployment status"])
+        self.assertEqual(gap_meta["query"], "What is the latest deployment status?")
+        self.assertEqual(gap_meta["local_attempts"], 1)
 
     def test_quality_penalizes_stale_sources_and_explains_route(self):
         fresh_score = quality_from_meta({

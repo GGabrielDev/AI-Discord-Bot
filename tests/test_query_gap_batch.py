@@ -141,6 +141,24 @@ class AskGapBatchRegressionTests(unittest.IsolatedAsyncioTestCase):
         final_gap_state = query.save_ask_checkpoint.call_args_list[-1].kwargs["gap_state"]
         self.assertEqual(final_gap_state["order"], ["gap four"])
 
+    async def test_semantic_gap_dedup_reduces_probe_count_and_checkpoint_queue(self):
+        with patch.object(query, "extract_gap_queries", AsyncMock(return_value=[
+            "deployment status",
+            "What is the latest deployment status?",
+            "gap three",
+            "gap four",
+        ])):
+            result = await query.answer_question(
+                topic="energy",
+                question="What changed?",
+                mode="Balanced",
+                style="Concise",
+            )
+
+        self.assertEqual(result["english"], "refined draft")
+        self.assertEqual(query.deep_internal_probe.await_count, 3)
+        query.delete_ask_checkpoint.assert_called_once()
+
     async def test_resumed_batch_keeps_checkpoint_when_deferred_gaps_remain(self):
         resumed_gap_state = ensure_gap_state(None)
         query.queue_gap_queries(resumed_gap_state, ["gap one", "gap two", "gap three", "gap four"])
