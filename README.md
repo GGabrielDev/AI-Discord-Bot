@@ -66,6 +66,7 @@ Discord (User Interface)
     - **Concise**: High-efficiency technical briefs.
     - **Investigative**: Exhaustive, forensic-style deep-dives that explore contradictions and technical nuances.
 - **Dual-Ingestion Architecture** — Natively preserves massive compressed raw text blocks directly alongside the summarized chunks so granular letter-for-letter data is never lost.
+- **Gap Queue Throttling** — Each `/ask` gap-refinement cycle processes at most 3 Knowledge Gaps, defers overflow gaps, and prioritizes repeated gaps on later cycles.
 - **Native Translation** — Force reports into any language (Spanish, French, etc.) while automatically preserving mathematical symbology and proper nouns
 - **Context Budget Protection** — Automatically truncates assembled context to stay within the model's context window
 - **Structured Reports** — Outputs standardized Markdown with Executive Summary, Comprehensive Analysis, Citations, and Knowledge Gaps sections

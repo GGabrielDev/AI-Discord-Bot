@@ -11,6 +11,62 @@ from agent.wiki_builder import store_final_report
 # We utilize a large portion of the SAFE_WORD_BUDGET to allow the model 
 # to 'stretch its legs' with massive context, while reserving room for the R1 <think> block.
 MAX_CONTEXT_WORDS = int(SAFE_WORD_BUDGET * 0.85)
+MAX_GAPS_PER_CYCLE = 3
+
+def _normalize_gap_query(query: str) -> str:
+    """Normalizes a gap query so repeats can be tracked across refinement cycles."""
+    return re.sub(r"\s+", " ", re.sub(r"[^\w\s:/.-]", " ", query.lower())).strip()
+
+def _ensure_gap_state(gap_state: dict | None) -> dict:
+    """Initializes the deferred gap queue used across recursive ask cycles."""
+    if gap_state is None:
+        return {"pending": {}, "order": [], "repeat_counts": {}}
+    gap_state.setdefault("pending", {})
+    gap_state.setdefault("order", [])
+    gap_state.setdefault("repeat_counts", {})
+    return gap_state
+
+def _queue_gap_queries(gap_state: dict, gap_queries: list[str]) -> dict:
+    """Adds new gap queries to the deferred queue and increments repeat counts."""
+    pending = gap_state["pending"]
+    order = gap_state["order"]
+    repeat_counts = gap_state["repeat_counts"]
+
+    for gap_query in gap_queries:
+        normalized = _normalize_gap_query(gap_query)
+        if not normalized:
+            continue
+
+        repeat_counts[normalized] = repeat_counts.get(normalized, 0) + 1
+        best_query = pending.get(normalized)
+        if best_query is None or len(gap_query) > len(best_query):
+            pending[normalized] = gap_query
+        if normalized not in order:
+            order.append(normalized)
+
+    return gap_state
+
+def _dequeue_gap_batch(gap_state: dict, limit: int = MAX_GAPS_PER_CYCLE) -> tuple[list[str], int]:
+    """Returns highest-priority gaps for this cycle and keeps the rest deferred."""
+    order = gap_state["order"]
+    if not order:
+        return [], 0
+
+    pending = gap_state["pending"]
+    repeat_counts = gap_state["repeat_counts"]
+    order_index = {gap_key: idx for idx, gap_key in enumerate(order)}
+    ranked_keys = sorted(
+        order,
+        key=lambda gap_key: (-repeat_counts.get(gap_key, 0), order_index[gap_key])
+    )
+
+    selected_keys = ranked_keys[:limit]
+    remaining_keys = ranked_keys[limit:]
+    selected_queries = [pending[gap_key] for gap_key in selected_keys]
+
+    gap_state["pending"] = {gap_key: pending[gap_key] for gap_key in remaining_keys}
+    gap_state["order"] = remaining_keys
+    return selected_queries, len(remaining_keys)
 
 def fit_to_context_budget(system_prompt: str, user_prompt: str, max_words: int) -> tuple[str, str]:
     """Ensures total words across system and user prompts stay within max_words.
@@ -232,13 +288,15 @@ STYLE_CONFIG = {
 async def answer_question(topic: str, question: str, mode: str = "Balanced", style: str = "Concise", 
                       log_func=None, draft_callback=None, language: str = "English", 
                       no_web: bool = False,
-                      _current_auto_loop: int = 0, _draft: str = None, _extra_context: str = None) -> str:
+                      _current_auto_loop: int = 0, _draft: str = None, _extra_context: str = None,
+                      _gap_state: dict | None = None) -> str:
     """Answers a question pulling from the vector DB, with true Agentic RAG auto-looping for explicitly identified gaps."""
     # Import here to avoid circular imports if query.py is loaded first
     from agent.loop import run_autonomous_loop
     
     db = VectorDB(collection_name=topic)
     llm = LocalLLM()
+    gap_state = _ensure_gap_state(_gap_state)
     
     # Mode Constraints
     mode_limits = {"Fast": 0, "Balanced": 1, "Thorough": 3, "Omniscient": 999}
@@ -260,8 +318,14 @@ async def answer_question(topic: str, question: str, mode: str = "Balanced", sty
     if _draft and _current_auto_loop == 0:
         await log("📦 **Resuming from provided report.** Parsing knowledge gaps...")
         gap_queries = await extract_gap_queries(llm, _draft)
-        if gap_queries:
-            await log(f"🎯 **Identified {len(gap_queries)} Gaps in Resumed Report:** {', '.join(gap_queries)}", is_sub_step=True)
+        gap_state = _queue_gap_queries(gap_state, gap_queries)
+        queued_gap_count = len(gap_state["order"])
+        if queued_gap_count:
+            gap_batch, deferred_gap_count = _dequeue_gap_batch(gap_state)
+            await log(
+                f"🎯 **Queued {queued_gap_count} resumed gaps. Processing {len(gap_batch)} now; {deferred_gap_count} deferred.**",
+                is_sub_step=True
+            )
             # Jump straight to Phase 6 (Re-research)
             # We recreate the loc_log closure here for consistency
             async def loc_log(m, is_sub_step=False):
@@ -269,9 +333,9 @@ async def answer_question(topic: str, question: str, mode: str = "Balanced", sty
                 if log_func: await log_func(m, is_sub_step)
             
             # Start loop
-            for idx, gap_query in enumerate(gap_queries):
+            for idx, gap_query in enumerate(gap_batch):
                 if check_soft_stop(): break
-                await loc_log(f"🔎 *Targeting Gap {idx+1}/{len(gap_queries)}:* `{gap_query}`")
+                await loc_log(f"🔎 *Targeting Gap {idx+1}/{len(gap_batch)}:* `{gap_query}`")
                 sip_answer, sip_sources, is_resolved = await deep_internal_probe(db, llm, gap_query, mode, log_func=log_func)
                 
                 sip_context = ""
@@ -297,7 +361,8 @@ async def answer_question(topic: str, question: str, mode: str = "Balanced", sty
                     no_web=no_web, # Pass the flag
                     _current_auto_loop=_current_auto_loop + 1,
                     _draft=_draft, # Update the resumable draft
-                    _extra_context=sip_context if is_resolved else ""
+                    _extra_context=sip_context if is_resolved else "",
+                    _gap_state=gap_state
                 )
 
                 # If recursion returns a dict (top-level), return it. 
@@ -525,31 +590,43 @@ async def answer_question(topic: str, question: str, mode: str = "Balanced", sty
         # If this is the TOP-LEVEL call (loop 0), return the dual-language dict.
         # If it's a recursive call, return the EN string for continued refinement.
         if _current_auto_loop == 0:
-            return await finalize_dual_report(llm, answer, language, mode, is_interrupted)
+            return await finalize_dual_report(llm, answer, topic, language, mode, is_interrupted)
         return answer
         
     # 6. Extract Gaps and Agentic RAG Re-research
     gap_queries = await extract_gap_queries(llm, answer)
+    gap_state = _queue_gap_queries(gap_state, gap_queries)
     
     async def loc_log(m, is_sub_step=False):
         print(m)
         if log_func: await log_func(m, is_sub_step)
 
-    if gap_queries:
+    queued_gap_count = len(gap_state["order"])
+    if queued_gap_count:
         # Deliver intermediate draft file so the user can see the gaps before it stalls researching
         if draft_callback:
             await draft_callback(answer, _current_auto_loop)
-            
+
+        gap_batch, deferred_gap_count = _dequeue_gap_batch(gap_state)
         await loc_log(f"⚠️ **Knowledge Gaps detected.** Auto-initiating targeted research loop (Iteration {_current_auto_loop + 1}/{max_auto_loops if max_auto_loops < 999 else '∞'})...")
-        await loc_log(f"🎯 *Formulating Gap Chain:* {', '.join(gap_queries)}", is_sub_step=True)
+        if gap_queries:
+            await loc_log(
+                f"🎯 *Queued {len(gap_queries)} new gaps. Processing {len(gap_batch)} now; {deferred_gap_count} deferred.*",
+                is_sub_step=True
+            )
+        else:
+            await loc_log(
+                f"🎯 *No new gaps extracted. Resuming deferred queue: {len(gap_batch)} now; {deferred_gap_count} still deferred.*",
+                is_sub_step=True
+            )
         
-        for idx, gap_query in enumerate(gap_queries):
+        for idx, gap_query in enumerate(gap_batch):
             # Soft stop inter-query check
             if check_soft_stop():
                 await loc_log("🛑 **Soft Stop Acknowledged:** Gracefully abandoning remaining gap queries.")
                 break
                 
-            await loc_log(f"🚀 *Gap Tracker {idx+1}/{len(gap_queries)}* -> `{gap_query}`")
+            await loc_log(f"🚀 *Gap Tracker {idx+1}/{len(gap_batch)}* -> `{gap_query}`")
 
             # --- TASK: DEEP SEMANTIC INTERNAL PROBING (SIP) ---
             # We try to solve the gap using what we HAVE before hitting the web
@@ -578,13 +655,15 @@ async def answer_question(topic: str, question: str, mode: str = "Balanced", sty
                 topic=topic,
                 question=question,
                 mode=mode,
+                style=style,
                 log_func=log_func,
                 draft_callback=draft_callback,
                 language=language,
                 no_web=no_web,
                 _current_auto_loop=_current_auto_loop + 1,
                 _draft=answer,
-                _extra_context=sip_context
+                _extra_context=sip_context,
+                _gap_state=gap_state
             )
     
     # Final Guard: Ensure loop 0 always returns the Dual Report Dict
