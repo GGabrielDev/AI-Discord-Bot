@@ -19,7 +19,11 @@ Discord
   │     ├── vector retrieval
   │     ├── SIP local evidence probe
   │     ├── confidence-gated gap routing
-  │     └── markdown report synthesis
+  │     └── English markdown report synthesis
+  ├── /translate
+  │     ├── uploaded markdown intake
+  │     ├── markdown-preserving translation
+  │     └── translated report archival
   └── /chain_research
         ├── prompt decomposition
         ├── repeated /research runs
@@ -36,7 +40,7 @@ Discord
 | `agent/planner.py` | search query generation and loop replanning |
 | `agent/summarizer.py` | page summarization and chunking |
 | `agent/checkpoint.py` | crash-resume state for research and chain flows |
-| `query.py` | `/ask` RAG pipeline, gap queue, local-first routing |
+| `query.py` | `/ask` English-report pipeline, `/translate` helpers, gap queue, local-first routing |
 | `storage/vectordb.py` | ChromaDB access layer |
 | `tools/clean_db.py` | duplicate cleanup utility |
 | `tools/backfill_metadata.py` | metadata enrichment for existing collections |
@@ -83,7 +87,7 @@ The project stores data in two forms:
 1. Expand the user question into semantic variants
 2. Retrieve summary-first evidence from ChromaDB
 3. Pull raw technical evidence from highest-signal sources
-4. Synthesize markdown answer draft
+4. Synthesize English markdown answer draft
 5. Extract `Knowledge Gaps`
 6. For each queued gap:
    - run SIP local evidence probe
@@ -91,6 +95,14 @@ The project stores data in two forms:
    - preserve partial local findings if useful
    - escalate to web only when local signal is weak, stale, or repeatedly unresolved
 7. Refine draft recursively until loop budget stops or gaps are cleared
+
+## `/translate` flow
+
+1. Accept uploaded `.md` report from Discord
+2. Infer archive topic from the source report filename
+3. Translate the markdown while preserving structure
+4. Archive the translated copy under the target language
+5. Return the translated markdown file to the operator
 
 ## Checkpoint model
 

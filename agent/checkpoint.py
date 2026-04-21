@@ -243,7 +243,13 @@ def delete_chain_checkpoint(prompt: str):
         print(f"[Chain Checkpoint] 🗑️ Master chain checkpoint cleaned up (all topics complete).")
 
 
-def _ask_checkpoint_path(topic: str, question: str, mode: str, style: str, language: str, no_web: bool) -> str:
+def _ask_checkpoint_path(topic: str, question: str, mode: str, style: str, no_web: bool) -> str:
+    key = f"{topic}\n{question}\n{mode}\n{style}\n{int(no_web)}"
+    digest = hashlib.md5(key.encode("utf-8")).hexdigest()
+    return os.path.join(CHECKPOINT_DIR, f"ask_{digest}.json")
+
+
+def _legacy_ask_checkpoint_path(topic: str, question: str, mode: str, style: str, language: str, no_web: bool) -> str:
     key = f"{topic}\n{question}\n{mode}\n{style}\n{language}\n{int(no_web)}"
     digest = hashlib.md5(key.encode("utf-8")).hexdigest()
     return os.path.join(CHECKPOINT_DIR, f"ask_{digest}.json")
@@ -254,7 +260,6 @@ def save_ask_checkpoint(
     question: str,
     mode: str,
     style: str,
-    language: str,
     no_web: bool,
     current_auto_loop: int,
     draft: str | None,
@@ -267,7 +272,6 @@ def save_ask_checkpoint(
         "question": question,
         "mode": mode,
         "style": style,
-        "language": language,
         "no_web": no_web,
         "current_auto_loop": current_auto_loop,
         "draft": draft,
@@ -276,34 +280,47 @@ def save_ask_checkpoint(
         "status": status,
         "last_checkpoint": datetime.now().isoformat()
     }
-    filepath = _ask_checkpoint_path(topic, question, mode, style, language, no_web)
+    filepath = _ask_checkpoint_path(topic, question, mode, style, no_web)
     _atomic_save_json(filepath, state)
     print(f"[Ask Checkpoint] 💾 State saved (loop {current_auto_loop}, topic={topic})")
 
 
-def load_ask_checkpoint(topic: str, question: str, mode: str, style: str, language: str, no_web: bool) -> dict | None:
-    filepath = _ask_checkpoint_path(topic, question, mode, style, language, no_web)
+def load_ask_checkpoint(topic: str, question: str, mode: str, style: str, no_web: bool) -> dict | None:
+    filepath = _ask_checkpoint_path(topic, question, mode, style, no_web)
+    legacy_filepath = _legacy_ask_checkpoint_path(topic, question, mode, style, "English", no_web)
+
+    selected_path = filepath
     if not os.path.exists(filepath) and not os.path.exists(filepath + ".tmp"):
-        return None
+        if os.path.exists(legacy_filepath) or os.path.exists(legacy_filepath + ".tmp"):
+            selected_path = legacy_filepath
+        else:
+            return None
 
     try:
-        state = _load_json_checkpoint(filepath)
+        state = _load_json_checkpoint(selected_path)
         if state is None:
-            delete_ask_checkpoint(topic, question, mode, style, language, no_web)
+            delete_ask_checkpoint(topic, question, mode, style, no_web)
             return None
+        state.pop("language", None)
+        if selected_path != filepath:
+            _atomic_save_json(filepath, state)
+            _delete_json_checkpoint(selected_path)
         print(f"[Ask Checkpoint] 📂 Found saved ask session for topic '{topic}' at loop {state.get('current_auto_loop', 0)}")
         return state
     except (json.JSONDecodeError, KeyError) as e:
         print(f"[Ask Checkpoint] ⚠️ Corrupted ask checkpoint detected ({e}). Starting fresh.")
-        delete_ask_checkpoint(topic, question, mode, style, language, no_web)
+        delete_ask_checkpoint(topic, question, mode, style, no_web)
         return None
 
 
-def delete_ask_checkpoint(topic: str, question: str, mode: str, style: str, language: str, no_web: bool):
-    filepath = _ask_checkpoint_path(topic, question, mode, style, language, no_web)
+def delete_ask_checkpoint(topic: str, question: str, mode: str, style: str, no_web: bool):
+    filepath = _ask_checkpoint_path(topic, question, mode, style, no_web)
     if os.path.exists(filepath) or os.path.exists(filepath + ".tmp"):
         _delete_json_checkpoint(filepath)
         print(f"[Ask Checkpoint] 🗑️ Ask checkpoint cleaned up for topic '{topic}'.")
+    legacy_filepath = _legacy_ask_checkpoint_path(topic, question, mode, style, "English", no_web)
+    if legacy_filepath != filepath and (os.path.exists(legacy_filepath) or os.path.exists(legacy_filepath + ".tmp")):
+        _delete_json_checkpoint(legacy_filepath)
 
 
 def _gap_memory_path(topic: str) -> str:

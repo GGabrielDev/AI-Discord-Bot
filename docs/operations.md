@@ -47,6 +47,7 @@
 | `/research` | autonomous multi-iteration research loop |
 | `/crawl_site` | domain-focused crawl into one topic |
 | `/ask` | query stored knowledge with local-first RAG |
+| `/translate` | translate an uploaded markdown report into a target language |
 | `/chain_research` | decompose one large problem into multiple research loops |
 | `/finish` | soft-stop active long-running loops |
 

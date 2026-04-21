@@ -7,7 +7,12 @@ import chromadb
 from agent.loop import run_autonomous_loop
 from agent.crawler import run_focused_crawler
 from agent.wiki_builder import generate_index_page
-from query import answer_question
+from query import (
+    answer_question,
+    build_translated_report_filename,
+    infer_report_topic_from_filename,
+    translate_and_archive_report,
+)
 from config.settings import DISCORD_TOKEN, CHROMA_DB_PATH
 from llm.client import LocalLLM
 from tools.search import close_search_client
@@ -251,12 +256,11 @@ async def chain_research(interaction: discord.Interaction, prompt: str, topic: s
     delete_chain_checkpoint(prompt)
     await interaction.channel.send(f"🏁 **ALL CHAINS COMPLETE.** Pool `{topic}` is rich with knowledge!")
 
-@bot.tree.command(name="ask", description="Query your research database for answers.")
+@bot.tree.command(name="ask", description="Query your research database for English answers.")
 @app_commands.describe(
     topic="Select an existing research project.",
     question="What do you want to know?",
     mode="Select internal analysis strategy (Fast/Balanced/Thorough).",
-    language="Optional: Force output language (e.g. Spanish, French). Defaults to English.",
     resume_from="Optional: Attach a previous .md report to resume research and fill its gaps.",
     local_only="If True, skips all web searching/scraping and uses ONLY existing database data."
 )
@@ -274,7 +278,6 @@ async def chain_research(interaction: discord.Interaction, prompt: str, topic: s
 async def ask(interaction: discord.Interaction, topic: str, question: str, 
             mode: app_commands.Choice[str] = None, 
             style: app_commands.Choice[str] = None, 
-            language: str = "English",
             resume_from: discord.Attachment = None,
             local_only: bool = False):
     # Extract string from choice, default to Balanced
@@ -283,7 +286,7 @@ async def ask(interaction: discord.Interaction, topic: str, question: str,
 
     # Acknowledge the command natively - Truncate long questions to stay within Discord's 2000 char limit
     safe_q = (question[:1500] + '...') if len(question) > 1500 else question
-    existing_ask_checkpoint = None if resume_from else load_ask_checkpoint(topic, question, mode_val, style_val, language, local_only)
+    existing_ask_checkpoint = None if resume_from else load_ask_checkpoint(topic, question, mode_val, style_val, local_only)
     if existing_ask_checkpoint and existing_ask_checkpoint.get("status") == "in_progress":
         await interaction.response.send_message(f"### 🧠 Intelligence Report: {topic}\n> **Q:** {safe_q}\n\n⚡ **Resuming Interrupted Ask Session...**")
     else:
@@ -337,37 +340,27 @@ async def ask(interaction: discord.Interaction, topic: str, question: str,
             style=style_val,
             log_func=discord_status_logger, 
             draft_callback=handle_draft, 
-            language=language,
             no_web=local_only,
             _draft=resume_draft 
         )
         
-        # 2. Package the response (Dual File Delivery)
+        # 2. Package the response
         files = []
         
-        # English Version
         en_text = answer_data.get("english", "")
         if not en_text:
             en_text = "⚠️ **Warning:** The English report synthesis failed or returned empty content."
         
         en_bytes = io.BytesIO(en_text.encode('utf-8'))
-        en_filename = f"Report_{topic}_EN.md"
+        en_filename = f"Report_{topic}.md"
         files.append(discord.File(fp=en_bytes, filename=en_filename))
         print(f"[Main] Prepared {en_filename} ({len(en_text.encode('utf-8')):,} bytes)")
-        
-        # Translated Version
-        if answer_data.get("translated"):
-            tr_text = answer_data["translated"]
-            tr_bytes = io.BytesIO(tr_text.encode('utf-8'))
-            tr_filename = f"Report_{topic}_{language.upper()}.md"
-            files.append(discord.File(fp=tr_bytes, filename=tr_filename))
-            print(f"[Main] Prepared {tr_filename} ({len(tr_text.encode('utf-8')):,} bytes)")
-        
+
         # 3. Deliver via Fresh Message (Avoids 15m Interaction Timeout)
         final_msg = (
             f"### 🏁 Intelligence Report Finalized: {topic}\n"
             f"> **Q:** {safe_q}\n\n"
-            f"✅ Analysis Complete! Local-Only: `{local_only}`. Reports attached below."
+            f"✅ Analysis Complete! Local-Only: `{local_only}`. English report attached below."
         )
         
         try:
@@ -384,6 +377,48 @@ async def ask(interaction: discord.Interaction, topic: str, question: str,
     finally:
         from agent.checkpoint import clear_soft_stop
         clear_soft_stop()
+
+@bot.tree.command(name="translate", description="Translate a Markdown report into a target language.")
+@app_commands.describe(
+    report="Upload the .md report to translate.",
+    target_language="Target language, e.g. Spanish, French, or Portuguese."
+)
+async def translate(interaction: discord.Interaction, report: discord.Attachment, target_language: str):
+    if not report.filename.lower().endswith(".md"):
+        await interaction.response.send_message("❌ **Error:** `report` must be a `.md` Markdown file.")
+        return
+
+    safe_lang = (target_language[:100] + "...") if len(target_language) > 100 else target_language
+    await interaction.response.send_message(
+        f"### 🌐 Report Translation Started\n> **Source:** `{report.filename}`\n> **Target:** `{safe_lang}`\n\n⚙️ **Translating Markdown report...**"
+    )
+
+    try:
+        report_bytes = await report.read()
+        report_text = report_bytes.decode("utf-8-sig")
+        archive_topic = infer_report_topic_from_filename(report.filename)
+        translated_text = await translate_and_archive_report(report_text, archive_topic, target_language)
+
+        translated_bytes = io.BytesIO(translated_text.encode("utf-8"))
+        translated_filename = build_translated_report_filename(report.filename, target_language)
+        translated_file = discord.File(fp=translated_bytes, filename=translated_filename)
+
+        await interaction.channel.send(
+            content=(
+                "### ✅ Translated Report Ready\n"
+                f"> **Source:** `{report.filename}`\n"
+                f"> **Target:** `{safe_lang}`\n\n"
+                "Translated Markdown attached below."
+            ),
+            file=translated_file,
+        )
+        await interaction.edit_original_response(content="✅ **Translation Complete.** Translated report delivered as a new message.")
+    except UnicodeDecodeError:
+        await interaction.channel.send("❌ **Failed to read report:** Markdown files must be valid UTF-8 text.")
+    except ValueError as e:
+        await interaction.channel.send(f"❌ **Translation Error:** {e}")
+    except Exception as e:
+        await interaction.channel.send(f"🚨 **Translation Failed:** {e}")
 
 # --- Sync Command (Admin only) ---
 @bot.command()

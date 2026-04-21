@@ -27,7 +27,6 @@ class AskCheckpointTests(unittest.TestCase):
             question="What changed?",
             mode="Balanced",
             style="Concise",
-            language="English",
             no_web=False,
             current_auto_loop=1,
             draft="draft text",
@@ -35,23 +34,22 @@ class AskCheckpointTests(unittest.TestCase):
             extra_context="extra",
         )
 
-        loaded = checkpoint.load_ask_checkpoint("energy", "What changed?", "Balanced", "Concise", "English", False)
+        loaded = checkpoint.load_ask_checkpoint("energy", "What changed?", "Balanced", "Concise", False)
         self.assertIsNotNone(loaded)
         self.assertEqual(loaded["draft"], "draft text")
         self.assertEqual(loaded["gap_state"]["order"], ["gap"])
 
-        checkpoint.delete_ask_checkpoint("energy", "What changed?", "Balanced", "Concise", "English", False)
-        self.assertIsNone(checkpoint.load_ask_checkpoint("energy", "What changed?", "Balanced", "Concise", "English", False))
+        checkpoint.delete_ask_checkpoint("energy", "What changed?", "Balanced", "Concise", False)
+        self.assertIsNone(checkpoint.load_ask_checkpoint("energy", "What changed?", "Balanced", "Concise", False))
 
     def test_load_ask_checkpoint_recovers_tmp_file(self):
-        filepath = checkpoint._ask_checkpoint_path("energy", "What changed?", "Balanced", "Concise", "English", False)
+        filepath = checkpoint._ask_checkpoint_path("energy", "What changed?", "Balanced", "Concise", False)
         os.makedirs(checkpoint.CHECKPOINT_DIR, exist_ok=True)
         state = {
             "topic": "energy",
             "question": "What changed?",
             "mode": "Balanced",
             "style": "Concise",
-            "language": "English",
             "no_web": False,
             "current_auto_loop": 2,
             "draft": "draft text",
@@ -62,10 +60,37 @@ class AskCheckpointTests(unittest.TestCase):
         with open(filepath + ".tmp", "w", encoding="utf-8") as f:
             json.dump(state, f)
 
-        loaded = checkpoint.load_ask_checkpoint("energy", "What changed?", "Balanced", "Concise", "English", False)
+        loaded = checkpoint.load_ask_checkpoint("energy", "What changed?", "Balanced", "Concise", False)
         self.assertIsNotNone(loaded)
         self.assertTrue(os.path.exists(filepath))
         self.assertEqual(loaded["current_auto_loop"], 2)
+
+    def test_load_ask_checkpoint_migrates_legacy_english_key(self):
+        legacy_filepath = checkpoint._legacy_ask_checkpoint_path("energy", "What changed?", "Balanced", "Concise", "English", False)
+        new_filepath = checkpoint._ask_checkpoint_path("energy", "What changed?", "Balanced", "Concise", False)
+        os.makedirs(checkpoint.CHECKPOINT_DIR, exist_ok=True)
+        state = {
+            "topic": "energy",
+            "question": "What changed?",
+            "mode": "Balanced",
+            "style": "Concise",
+            "language": "English",
+            "no_web": False,
+            "current_auto_loop": 3,
+            "draft": "legacy draft",
+            "gap_state": {"pending": {}, "order": [], "repeat_counts": {}, "details": {}, "loop_index": 3},
+            "extra_context": "legacy",
+            "status": "in_progress",
+        }
+        with open(legacy_filepath, "w", encoding="utf-8") as f:
+            json.dump(state, f)
+
+        loaded = checkpoint.load_ask_checkpoint("energy", "What changed?", "Balanced", "Concise", False)
+        self.assertIsNotNone(loaded)
+        self.assertEqual(loaded["draft"], "legacy draft")
+        self.assertNotIn("language", loaded)
+        self.assertTrue(os.path.exists(new_filepath))
+        self.assertFalse(os.path.exists(legacy_filepath))
 
     def test_gap_memory_roundtrip(self):
         memory = {

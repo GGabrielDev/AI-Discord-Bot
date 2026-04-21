@@ -6,7 +6,8 @@ Autonomous Discord bot for web research, site crawling, and local knowledge-base
 
 - `/research` runs iterative search -> scrape -> summarize -> replan loops
 - `/crawl_site` ingests one site with domain lock and PDF support
-- `/ask` queries ChromaDB with local-first RAG, gap tracking, and optional web escalation
+- `/ask` queries ChromaDB with local-first RAG and returns an English markdown report
+- `/translate` converts an uploaded markdown report into a target language
 - `/chain_research` decomposes a large topic into multiple research branches
 - `/finish` requests a graceful stop
 
@@ -53,6 +54,7 @@ Autonomous Discord bot for web research, site crawling, and local knowledge-base
 /research subject:"solid state batteries" iterations:5 depth:3
 /crawl_site url:"https://example.com/docs" topic:"example_docs" max_pages:50
 /ask topic:"solid state batteries" question:"What are the main electrolyte materials?" mode:Thorough style:Investigative
+/translate report:Report_solid_state_batteries.md target_language:Spanish
 /chain_research prompt:"Map Paraguay radio law end to end" topic:"radio_laws"
 /finish
 ```

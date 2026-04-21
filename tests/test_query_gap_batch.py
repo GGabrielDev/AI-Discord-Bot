@@ -85,10 +85,7 @@ class AskGapBatchRegressionTests(unittest.IsolatedAsyncioTestCase):
             patch.object(query, "save_ask_checkpoint"),
             patch.object(query, "delete_ask_checkpoint"),
             patch.object(query, "check_soft_stop", return_value=False),
-            patch.object(query, "finalize_dual_report", AsyncMock(side_effect=lambda llm, draft, topic, language, mode, interrupted: {
-                "english": draft,
-                "translated": None,
-            })),
+            patch.object(query, "finalize_report", AsyncMock(side_effect=lambda draft, topic: {"english": draft})),
         ]
 
         self.patchers = []
@@ -110,6 +107,7 @@ class AskGapBatchRegressionTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(result["english"], "refined draft")
+        self.assertNotIn("translated", result)
         self.assertEqual(self.llm.generate_text.await_count, 2)
         self.assertEqual(query.deep_internal_probe.await_count, 3)
 
@@ -161,6 +159,48 @@ class AskGapBatchRegressionTests(unittest.IsolatedAsyncioTestCase):
         query.delete_ask_checkpoint.assert_not_called()
         final_gap_state = query.save_ask_checkpoint.call_args_list[-1].kwargs["gap_state"]
         self.assertEqual(final_gap_state["order"], ["gap four"])
+
+
+class AskFinalizeReportTests(unittest.IsolatedAsyncioTestCase):
+    async def test_finalize_report_returns_only_english_and_archives_once(self):
+        with patch.object(query, "store_final_report") as store_final_report:
+            result = await query.finalize_report("final english draft", "energy")
+
+        self.assertEqual(result, {"english": "final english draft"})
+        store_final_report.assert_called_once_with("energy", "final english draft")
+
+
+class TranslateReportHelperTests(unittest.IsolatedAsyncioTestCase):
+    async def test_translate_markdown_report_skips_llm_for_english(self):
+        llm = Mock()
+        llm.generate_text = AsyncMock()
+
+        result = await query.translate_markdown_report("# Title", "English", llm=llm)
+
+        self.assertEqual(result, "# Title")
+        llm.generate_text.assert_not_awaited()
+
+    async def test_translate_and_archive_report_uses_llm_and_archives_target_language(self):
+        llm = Mock()
+        llm.generate_text = AsyncMock(return_value="# Título\n\nContenido")
+
+        with patch.object(query, "store_final_report") as store_final_report:
+            result = await query.translate_and_archive_report("# Title\n\nContent", "energy", "Spanish", llm=llm)
+
+        self.assertEqual(result, "# Título\n\nContenido")
+        llm.generate_text.assert_awaited_once()
+        store_final_report.assert_called_once_with("energy", "# Título\n\nContenido", "Spanish")
+
+
+class TranslateReportFilenameTests(unittest.TestCase):
+    def test_build_translated_report_filename_appends_language_tag(self):
+        self.assertEqual(
+            query.build_translated_report_filename("Report_energy.md", "Portuguese (Brazil)"),
+            "Report_energy_PORTUGUESE_BRAZIL.md",
+        )
+
+    def test_infer_report_topic_from_filename_uses_report_stem(self):
+        self.assertEqual(query.infer_report_topic_from_filename("Report_energy.md"), "energy")
 
 
 if __name__ == "__main__":

@@ -99,8 +99,8 @@ def store_article(subject: str, url: str, summary_text: str):
     # Every time a new article is stored, regenerate the master index
     generate_index_page()
 
-def store_final_report(topic: str, report_text: str, language: str):
-    """Archives the finalized intelligence report in a dedicated 'final_reports' folder."""
+def store_final_report(topic: str, report_text: str, language: str = "EN"):
+    """Archives a finalized intelligence report in a dedicated folder."""
     if not report_text or len(report_text.strip()) < 10:
         print(f"[WikiBuilder] Skipping archive for empty/trivial report (Topic: {topic})")
         return
@@ -110,7 +110,8 @@ def store_final_report(topic: str, report_text: str, language: str):
     os.makedirs(report_dir, exist_ok=True)
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"Final_Report_{language.upper()}_{timestamp}.md"
+    safe_language = re.sub(r"[^a-zA-Z0-9]+", "_", (language or "EN")).strip("_").upper() or "EN"
+    filename = f"Final_Report_{safe_language}_{timestamp}.md"
     filepath = os.path.join(report_dir, filename)
 
     try:
@@ -119,4 +120,3 @@ def store_final_report(topic: str, report_text: str, language: str):
         print(f"[WikiBuilder] 💾 ARCHIVED final report to: {filepath} ({len(report_text.encode('utf-8')):,} bytes)")
     except Exception as e:
         print(f"[WikiBuilder] 🚨 Failed to archive final report: {e}")
-

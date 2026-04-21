@@ -95,13 +95,14 @@ Run these on the target machine after deploying new code:
 2. Confirm SearXNG responds
 3. Start `python main.py`
 4. In Discord:
-   - run a small `/research`
-   - run a small `/crawl_site`
-   - run `/ask` on an existing topic
-   - interrupt a long `/ask`, restart bot, rerun same request, confirm resume
-   - compare one `/research` run under `RESOURCE_PROFILE=low-memory` vs `balanced` and confirm lower source count / lower latency under the low-memory profile
-   - if telemetry is enabled, confirm the run prints a summary with cache/search/source counters
-   - if `ENABLE_MARKER_PDF=1` is used on that machine, test at least one text-poor PDF and confirm fallback/triage behaves acceptably
+    - run a small `/research`
+    - run a small `/crawl_site`
+    - run `/ask` on an existing topic and confirm it returns the English report
+    - upload that report to `/translate` and confirm the translated markdown is returned and archived
+    - interrupt a long `/ask`, restart bot, rerun same request, confirm resume
+    - compare one `/research` run under `RESOURCE_PROFILE=low-memory` vs `balanced` and confirm lower source count / lower latency under the low-memory profile
+    - if telemetry is enabled, confirm the run prints a summary with cache/search/source counters
+    - if `ENABLE_MARKER_PDF=1` is used on that machine, test at least one text-poor PDF and confirm fallback/triage behaves acceptably
 
 ## Recovery checklist
 
@@ -115,6 +116,12 @@ Run these on the target machine after deploying new code:
 
 - rerun same topic/question/settings to auto-resume from checkpoint
 - or attach markdown draft with `resume_from` for manual resume
+
+### If operators need a non-English report
+
+- first run `/ask` and keep the English markdown output
+- upload that `.md` file to `/translate`
+- confirm the translated file is returned with the expected language tag
 
 ### If metadata backfill is needed
 

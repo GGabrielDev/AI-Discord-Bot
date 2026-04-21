@@ -2,6 +2,7 @@ import asyncio
 import argparse
 import copy
 import hashlib
+from pathlib import Path
 import re
 from storage.vectordb import VectorDB
 from llm.client import LocalLLM
@@ -452,14 +453,14 @@ STYLE_CONFIG = {
 }
 
 async def answer_question(topic: str, question: str, mode: str = "Balanced", style: str = "Concise", 
-                      log_func=None, draft_callback=None, language: str = "English", 
+                      log_func=None, draft_callback=None,
                       no_web: bool = False,
                       _current_auto_loop: int = 0, _draft: str = None, _extra_context: str = None,
-                      _gap_state: dict | None = None) -> str:
+                      _gap_state: dict | None = None) -> dict | str:
     """Answers a question pulling from the vector DB, with true Agentic RAG auto-looping for explicitly identified gaps."""
     with telemetry_session(
         f"ask:{question}",
-        metadata={"topic": topic, "mode": mode, "style": style, "language": language, "local_only": no_web},
+        metadata={"topic": topic, "mode": mode, "style": style, "local_only": no_web},
     ):
         # Global logging helper for this session
         async def log(msg: str, is_sub_step: bool = False):
@@ -474,7 +475,7 @@ async def answer_question(topic: str, question: str, mode: str = "Balanced", sty
         gap_state = merge_gap_memory(advance_gap_cycle(ensure_gap_state(_gap_state), _current_auto_loop), loaded_memory)
 
         if _current_auto_loop == 0 and _draft is None and _gap_state is None:
-            ask_checkpoint = load_ask_checkpoint(topic, question, mode, style, language, no_web)
+            ask_checkpoint = load_ask_checkpoint(topic, question, mode, style, no_web)
             if ask_checkpoint and ask_checkpoint.get("status") == "in_progress":
                 telemetry_bump("ask.resumed")
                 resumed_ask = True
@@ -506,7 +507,6 @@ async def answer_question(topic: str, question: str, mode: str = "Balanced", sty
                 question=question,
                 mode=mode,
                 style=style,
-                language=language,
                 no_web=no_web,
                 current_auto_loop=_current_auto_loop,
                 draft=draft_text,
@@ -516,7 +516,7 @@ async def answer_question(topic: str, question: str, mode: str = "Balanced", sty
             persist_gap_history()
 
         def clear_ask_state():
-            delete_ask_checkpoint(topic, question, mode, style, language, no_web)
+            delete_ask_checkpoint(topic, question, mode, style, no_web)
             persist_gap_history()
 
         def has_pending_gap_queue() -> bool:
@@ -580,7 +580,6 @@ async def answer_question(topic: str, question: str, mode: str = "Balanced", sty
                         style=style,
                         log_func=log_func,
                         draft_callback=draft_callback,
-                        language=language,
                         no_web=no_web,
                         _current_auto_loop=_current_auto_loop + 1,
                         _draft=_draft,
@@ -591,7 +590,7 @@ async def answer_question(topic: str, question: str, mode: str = "Balanced", sty
                     persist_ask_state(_draft, None)
 
                 if _current_auto_loop == 0:
-                    result = await finalize_dual_report(llm, _draft, topic, language, mode, batch_interrupted or check_soft_stop())
+                    result = await finalize_report(_draft, topic)
                     if not batch_interrupted and not has_pending_gap_queue():
                         clear_ask_state()
                     elif not batch_interrupted:
@@ -777,14 +776,6 @@ async def answer_question(topic: str, question: str, mode: str = "Balanced", sty
             )
         else:
             system_prompt = persona_config["persona"]
-        
-            if language.lower() != "english":
-                system_prompt += (
-                    f"\n\nCRITICAL INSTRUCTION: You MUST write your entire final response natively in {language.capitalize()}. "
-                    f"However, you must act intelligently: preserve proper nouns, mathematical symbology, "
-                    f"and highly specific technical industry terms in their original form without forcing a translation."
-                )
-            
             user_prompt = (
                 f"CONTEXT FROM RESEARCH:\n"
                 f"{context_text}\n\n"
@@ -795,14 +786,6 @@ async def answer_question(topic: str, question: str, mode: str = "Balanced", sty
         # Final Context Shield Check: Combine and ensure it fits the model
         system_prompt, user_prompt = fit_to_context_budget(system_prompt, user_prompt, MAX_CONTEXT_WORDS)
 
-        # Use English for all internal synthesis to maintain fidelity
-        internal_language = "English"
-        if language.lower() != "english":
-            # Only apply target language instructions if this is the FINAL iteration
-            # (No gaps remaining OR soft stop OR loop limit)
-            # We check this condition later to see if we need a final translation pass.
-            pass
-
         # Use default LLM_TIMEOUT from .env (no hardcoded override)
         answer = await llm.generate_text(system_prompt, user_prompt, temperature=0.3, max_tokens=LLM_MAX_TOKENS)
         persist_ask_state(answer, _extra_context)
@@ -812,12 +795,8 @@ async def answer_question(topic: str, question: str, mode: str = "Balanced", sty
         if _current_auto_loop >= max_auto_loops or is_interrupted:
             if is_interrupted:
                 await log("🛑 **Soft Stop Acknowledged:** Halting Agentic gaps auto-loop early.")
-        
-            # --- Task 17: Dual Output Logic ---
-            # If this is the TOP-LEVEL call (loop 0), return the dual-language dict.
-            # If it's a recursive call, return the EN string for continued refinement.
             if _current_auto_loop == 0:
-                result = await finalize_dual_report(llm, answer, topic, language, mode, is_interrupted)
+                result = await finalize_report(answer, topic)
                 if has_pending_gap_queue():
                     await log_retained_gap_checkpoint("this refinement cycle")
                 else:
@@ -876,7 +855,6 @@ async def answer_question(topic: str, question: str, mode: str = "Balanced", sty
                     style=style,
                     log_func=log_func,
                     draft_callback=draft_callback,
-                    language=language,
                     no_web=no_web,
                     _current_auto_loop=_current_auto_loop + 1,
                     _draft=answer,
@@ -885,7 +863,7 @@ async def answer_question(topic: str, question: str, mode: str = "Balanced", sty
                 )
                 persist_ask_state(answer if not isinstance(answer, dict) else answer.get("english"), None)
     
-        # Final Guard: Ensure loop 0 always returns the Dual Report Dict
+        # Final Guard: Ensure loop 0 always returns the report payload
         if _current_auto_loop == 0:
             if isinstance(answer, dict):
                 if not preserve_checkpoint and not has_pending_gap_queue():
@@ -893,46 +871,87 @@ async def answer_question(topic: str, question: str, mode: str = "Balanced", sty
                 elif not preserve_checkpoint:
                     await log_retained_gap_checkpoint("this refinement cycle")
                 return answer
-            result = await finalize_dual_report(llm, answer, topic, language, mode, check_soft_stop())
+            result = await finalize_report(answer, topic)
             if not preserve_checkpoint and not has_pending_gap_queue():
                 clear_ask_state()
             elif not preserve_checkpoint:
                 await log_retained_gap_checkpoint("this refinement cycle")
             return result
     
-        # Recursive layers just return the EN string
+        # Recursive layers just return the English string
         if isinstance(answer, dict): return answer["english"]
         return answer
 
-async def finalize_dual_report(llm: LocalLLM, english_draft: str, topic: str, target_language: str, mode: str, is_interrupted: bool) -> dict:
-    """Performs the final translation pass and packages both EN and Translated versions."""
-    if target_language.lower() == "english":
-        return {"english": english_draft, "translated": None}
+async def finalize_report(english_draft: str, topic: str) -> dict:
+    """Packages and archives the finalized English report."""
+    store_final_report(topic, english_draft)
+    return {"english": english_draft}
 
-    # User's Interruption Logic:
-    # - Omniscient: Always translate.
-    # - Balanced/Thorough + Interrupted: User originally said return EN, then said "I want both".
-    # We will provide both.
-    
-    print(f"[Query] Performing final translation pass to {target_language}...")
+def normalize_target_language(target_language: str) -> str:
+    """Normalizes the requested translation language."""
+    language = (target_language or "").strip()
+    if not language:
+        raise ValueError("Target language is required.")
+    return language
+
+def language_filename_tag(target_language: str) -> str:
+    """Builds a filesystem-safe language tag for filenames."""
+    language = normalize_target_language(target_language)
+    return re.sub(r"[^a-zA-Z0-9]+", "_", language).strip("_").upper() or "TRANSLATED"
+
+def build_translated_report_filename(source_filename: str, target_language: str) -> str:
+    """Creates the filename for a translated markdown report."""
+    source_name = Path(source_filename or "report.md").name
+    source_stem = Path(source_name).stem or "report"
+    return f"{source_stem}_{language_filename_tag(target_language)}.md"
+
+def infer_report_topic_from_filename(source_filename: str) -> str:
+    """Best-effort topic inference for translated report archival."""
+    source_stem = Path(source_filename or "translated_report.md").stem.strip() or "translated_report"
+    if source_stem.lower().startswith("report_"):
+        topic = source_stem[len("Report_"):]
+        return re.sub(r"_(?:[A-Z]{2,3}|[A-Z]{2}_[A-Z]{2})$", "", topic) or "translated_report"
+    return source_stem
+
+async def translate_markdown_report(markdown_text: str, target_language: str, llm: LocalLLM | None = None) -> str:
+    """Translates a markdown report while preserving structure."""
+    language = normalize_target_language(target_language)
+    if not markdown_text or not markdown_text.strip():
+        raise ValueError("Markdown report is empty.")
+    if language.lower() == "english":
+        return markdown_text
+
+    translator = llm or LocalLLM()
     system_prompt = (
-        f"You are a professional translator and research analyst. "
-        f"Translate the following HIGH-FIDELITY technical report into {target_language.capitalize()}.\n\n"
-        "Guidelines:\n"
-        "- Maintain all Markdown formatting, charts, and structure.\n"
-        "- Preserve proper nouns, product names, and mathematical symbology precisely.\n"
-        "- Use professional, formal technical terminology."
+        "You are a professional translator and research analyst.\n"
+        f"Translate the user's Markdown report into {language}.\n\n"
+        "Rules:\n"
+        "- Preserve the Markdown structure exactly, including headings, lists, tables, blockquotes, and code fences.\n"
+        "- Preserve links, URLs, citations, product names, proper nouns, and mathematical notation unless a natural translation is clearly required.\n"
+        "- Keep the tone formal and technically precise.\n"
+        "- Return only the translated Markdown."
     )
-    user_prompt = f"REPORT TO TRANSLATE:\n{english_draft}"
-    
-    translated = await llm.generate_text(system_prompt, user_prompt, temperature=0.1, max_tokens=LLM_MAX_TOKENS)
-    
-    # 💾 Auto-Archive Persistent Reports
-    store_final_report(topic, english_draft, "EN")
-    if translated:
-        store_final_report(topic, translated, target_language)
-        
-    return {"english": english_draft, "translated": translated}
+    translated = await translator.generate_text(
+        system_prompt,
+        f"MARKDOWN REPORT TO TRANSLATE:\n{markdown_text}",
+        temperature=0.1,
+        max_tokens=LLM_MAX_TOKENS,
+    )
+    if not translated or not translated.strip():
+        raise ValueError(f"Translation to {language} returned empty content.")
+    return translated
+
+async def translate_and_archive_report(
+    markdown_text: str,
+    topic: str,
+    target_language: str,
+    llm: LocalLLM | None = None,
+) -> str:
+    """Translates a markdown report and archives the translated copy."""
+    language = normalize_target_language(target_language)
+    translated = await translate_markdown_report(markdown_text, language, llm=llm)
+    store_final_report(topic, translated, language)
+    return translated
 
 def main():
     parser = argparse.ArgumentParser(description="Query your local research database via CLI.")
@@ -944,7 +963,7 @@ def main():
     # Create dummy async runner mapped back to prints
     async def run():
         answer = await answer_question(args.topic, args.question, mode=args.mode)
-        print("\n\n" + answer)
+        print("\n\n" + (answer["english"] if isinstance(answer, dict) else answer))
     asyncio.run(run())
 
 if __name__ == "__main__":

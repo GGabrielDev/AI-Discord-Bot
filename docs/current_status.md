@@ -12,7 +12,8 @@ Project is in a usable but still evolving state. Core research, crawl, and query
 - autonomous `/research` loop
 - focused `/crawl_site`
 - `/chain_research` orchestration
-- `/ask` markdown report generation
+- `/ask` English markdown report generation
+- `/translate` uploaded-markdown report translation
 - Chroma-backed vector retrieval
 - markdown article/report persistence
 
@@ -43,6 +44,12 @@ Project is in a usable but still evolving state. Core research, crawl, and query
 - local-first confidence-gated routing
 - preservation of partial offline evidence
 - web escalation only when local signal remains weak or repeated
+
+### `/translate`
+
+- translates uploaded markdown reports into a requested target language
+- preserves the English `/ask` output as the source report
+- archives translated report copies separately by language
 
 ### Runtime efficiency
 
