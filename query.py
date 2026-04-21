@@ -333,9 +333,10 @@ async def _process_gap_batch(
     from agent.loop import run_autonomous_loop
 
     async def loc_log(m, is_sub_step=False):
-        print(m)
         if log_func:
             await log_func(m, is_sub_step)
+        else:
+            print(m)
 
     accumulated_context = extra_context
     for idx, gap_query in enumerate(gap_batch):
@@ -464,7 +465,6 @@ async def answer_question(topic: str, question: str, mode: str = "Balanced", sty
     ):
         # Global logging helper for this session
         async def log(msg: str, is_sub_step: bool = False):
-            print(msg)
             if log_func:
                 await log_func(msg, is_sub_step)
             else:
@@ -811,8 +811,10 @@ async def answer_question(topic: str, question: str, mode: str = "Balanced", sty
         persist_ask_state(answer, _extra_context)
     
         async def loc_log(m, is_sub_step=False):
-            print(m)
-            if log_func: await log_func(m, is_sub_step)
+            if log_func:
+                await log_func(m, is_sub_step)
+            else:
+                print(m)
 
         queued_gap_count = len(gap_state["order"])
         preserve_checkpoint = False

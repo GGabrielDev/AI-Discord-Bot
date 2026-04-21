@@ -65,9 +65,10 @@ async def run_autonomous_loop(subject, topic, max_iterations=3, depth=3, log_fun
         # This helper sends text to Discord if a log_func is provided, 
         # otherwise it just prints to the terminal.
         async def report(msg, is_sub_step=False):
-            print(msg)
             if log_func:
                 await log_func(msg, is_sub_step)
+            else:
+                print(msg)
 
         # --- Checkpoint Recovery ---
         checkpoint = load_checkpoint(subject)
