@@ -4,6 +4,13 @@ from dotenv import load_dotenv
 # Load the .env file
 load_dotenv()
 
+
+def _env_bool(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() not in {"0", "false", "no", "off"}
+
 # --- Discord Settings ---
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 if not DISCORD_TOKEN:
@@ -40,6 +47,10 @@ _RESOURCE_PROFILES = {
         "summarizer_words_per_call_ratio": 0.45,
         "max_html_mb": 6,
         "max_pdf_mb": 40,
+        "raw_chunk_soft_cap": 1500,
+        "raw_small_source_max_chunks": 4,
+        "raw_default_max_chunks_per_source": 3,
+        "raw_high_value_max_chunks_per_source": 8,
     },
     "balanced": {
         "search_candidate_multiplier": 3,
@@ -48,6 +59,10 @@ _RESOURCE_PROFILES = {
         "summarizer_words_per_call_ratio": 0.6,
         "max_html_mb": 10,
         "max_pdf_mb": 80,
+        "raw_chunk_soft_cap": 4000,
+        "raw_small_source_max_chunks": 6,
+        "raw_default_max_chunks_per_source": 6,
+        "raw_high_value_max_chunks_per_source": 16,
     },
     "max-recall": {
         "search_candidate_multiplier": 4,
@@ -56,6 +71,10 @@ _RESOURCE_PROFILES = {
         "summarizer_words_per_call_ratio": 0.7,
         "max_html_mb": 12,
         "max_pdf_mb": 150,
+        "raw_chunk_soft_cap": 12000,
+        "raw_small_source_max_chunks": 8,
+        "raw_default_max_chunks_per_source": 12,
+        "raw_high_value_max_chunks_per_source": 32,
     },
 }
 
@@ -69,6 +88,15 @@ SEARCH_PREFILTER_MIN_SCORE = _ACTIVE_PROFILE["search_prefilter_min_score"]
 SUMMARIZER_WORDS_PER_CALL_RATIO = _ACTIVE_PROFILE["summarizer_words_per_call_ratio"]
 SCRAPER_MAX_HTML_SIZE = _ACTIVE_PROFILE["max_html_mb"] * 1024 * 1024
 SCRAPER_MAX_PDF_SIZE = _ACTIVE_PROFILE["max_pdf_mb"] * 1024 * 1024
+RAW_CHUNK_SOFT_CAP = _ACTIVE_PROFILE["raw_chunk_soft_cap"]
+RAW_SMALL_SOURCE_MAX_CHUNKS = _ACTIVE_PROFILE["raw_small_source_max_chunks"]
+RAW_DEFAULT_MAX_CHUNKS_PER_SOURCE = _ACTIVE_PROFILE["raw_default_max_chunks_per_source"]
+RAW_HIGH_VALUE_MAX_CHUNKS_PER_SOURCE = _ACTIVE_PROFILE["raw_high_value_max_chunks_per_source"]
+
+# --- Runtime Telemetry ---
+RUNTIME_TELEMETRY_ENABLED = _env_bool("RUNTIME_TELEMETRY_ENABLED", True)
+RUNTIME_TELEMETRY_PRINT_SUMMARY = _env_bool("RUNTIME_TELEMETRY_PRINT_SUMMARY", True)
+RUNTIME_TELEMETRY_TOP_SOURCES = max(0, int(os.getenv("RUNTIME_TELEMETRY_TOP_SOURCES", "3")))
 
 # --- Storage Settings ---
 # Defaults to a folder named 'chroma_data' in your project root

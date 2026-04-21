@@ -83,11 +83,22 @@ async def run_focused_crawler(base_url, topic, max_pages=30, max_depth=3, log_fu
                 
                 # 2. Store (Dual-Ingestion)
                 summary_chunks = chunk_text(summary)
-                await db.add_chunks(summary_chunks, url, chunk_type="summary")
-                
                 compressed_raw = compress_raw_text(text)
                 raw_chunks = chunk_text(compressed_raw)
-                await db.add_chunks(raw_chunks, url, chunk_type="raw")
+                kept_raw_chunks, raw_policy = await db.plan_raw_chunks(raw_chunks, url)
+                await db.add_chunks(summary_chunks, url, chunk_type="summary", extra_metadata=raw_policy)
+                if kept_raw_chunks:
+                    await db.add_chunks(kept_raw_chunks, url, chunk_type="raw", extra_metadata=raw_policy)
+                    if len(kept_raw_chunks) < len(raw_chunks):
+                        await step_log(
+                            f"🧊 *Adaptive raw retention kept {len(kept_raw_chunks)}/{len(raw_chunks)} chunks "
+                            f"({raw_policy['raw_storage_tier']}, {raw_policy['raw_storage_reason']}).*"
+                        )
+                else:
+                    await step_log(
+                        f"🧊 *Adaptive raw retention stored summary only for this source "
+                        f"({raw_policy['raw_storage_reason']}).*"
+                    )
                 
                 # 3. Wiki Builder
                 store_article(topic, url, summary)

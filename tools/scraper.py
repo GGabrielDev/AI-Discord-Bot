@@ -8,7 +8,9 @@ from config.settings import (
     HTTP_KEEPALIVE_EXPIRY,
     SCRAPER_MAX_HTML_SIZE,
     SCRAPER_MAX_PDF_SIZE,
+    RESOURCE_PROFILE,
 )
+from runtime_telemetry import bump as telemetry_bump
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -47,6 +49,21 @@ async def close_scraper_client():
         await _scraper_client.aclose()
         _scraper_client = None
 
+
+def _parse_content_length(headers) -> int | None:
+    raw_value = headers.get("Content-Length")
+    if not raw_value:
+        return None
+    try:
+        value = int(raw_value)
+    except (TypeError, ValueError):
+        return None
+    return value if value >= 0 else None
+
+
+def _should_skip_pdf_download(content_length: int | None) -> bool:
+    return content_length is not None and content_length > MAX_PDF_SIZE
+
 async def scrape_text_from_url(url: str, timeout: int = 15, log_func=None) -> str:
     """Safely streams a URL, checks content type, and extracts pure readable text or PDF markdown."""
     result = await _scrape_core(url, timeout, log_func, want_links=False)
@@ -62,6 +79,7 @@ async def _scrape_core(url: str, timeout: int, log_func, want_links: bool) -> an
         else: print(msg)
 
     await log(f"[Scraper] Connecting to: {url}")
+    telemetry_bump("url.attempted")
     
     try:
         client = _get_scraper_client()
@@ -71,6 +89,15 @@ async def _scrape_core(url: str, timeout: int, log_func, want_links: bool) -> an
             content_type = response.headers.get("Content-Type", "").lower()
             
             if "application/pdf" in content_type:
+                content_length = _parse_content_length(response.headers)
+                if _should_skip_pdf_download(content_length):
+                    telemetry_bump("url.skipped")
+                    telemetry_bump("url.skipped.pdf_too_large")
+                    await log(
+                        f"[Scraper] ⚠️ PDF advertised size {content_length / 1024 / 1024:.2f}MB "
+                        f"exceeds profile cap {MAX_PDF_SIZE / 1024 / 1024:.0f}MB. Skipping download."
+                    )
+                    return ("", []) if want_links else ""
                 await log(f"[Scraper] 📄 PDF detected. Initiating secure stream...")
                 text = await _stream_and_process_pdf(response, log)
                 return (text, []) if want_links else text
@@ -80,13 +107,19 @@ async def _scrape_core(url: str, timeout: int, log_func, want_links: bool) -> an
                 return await _stream_and_process_html(response, log, want_links, base_url=str(response.url))
                 
             else:
+                telemetry_bump("url.skipped")
+                telemetry_bump("url.skipped.unsupported_content_type")
                 await log(f"[Scraper] ⚠️ Unsupported content type skipped: {content_type}")
                 return ("", []) if want_links else ""
                     
     except httpx.TimeoutException:
+        telemetry_bump("url.skipped")
+        telemetry_bump("url.skipped.timeout")
         await log(f"[Scraper] Warning: Timed out waiting for {url}")
         return ("", []) if want_links else ""
     except Exception as e:
+        telemetry_bump("url.skipped")
+        telemetry_bump("url.skipped.error")
         await log(f"[Scraper] Failed to scrape {url}: {e}")
         return ("", []) if want_links else ""
 
@@ -99,6 +132,7 @@ async def _stream_and_process_html(response: httpx.Response, log_func, want_link
     async for chunk in response.aiter_bytes():
         downloaded_bytes.extend(chunk)
         if len(downloaded_bytes) > MAX_HTML_SIZE:
+            telemetry_bump("html.truncated")
             await log_func(f"[Scraper] ⚠️ HTML size exceeded {MAX_HTML_SIZE//1024//1024}MB. Truncating.")
             break
             
@@ -127,6 +161,8 @@ async def _stream_and_process_html(response: httpx.Response, log_func, want_link
     
     # Very basic validation (e.g. Cloudflare captcha block check)
     if "Just a moment..." in clean_text and "Cloudflare" in html_content:
+        telemetry_bump("url.skipped")
+        telemetry_bump("url.skipped.cloudflare")
         await log_func("[Scraper] ⚠️ Blocked by Cloudflare.")
         return ("", []) if want_links else ""
         
@@ -134,13 +170,9 @@ async def _stream_and_process_html(response: httpx.Response, log_func, want_link
     return (clean_text, links) if want_links else clean_text
 
 async def _stream_and_process_pdf(response: httpx.Response, log_func) -> str:
-    """Streams large PDFs directly to a temporary file, then parses them with marker."""
+    """Streams a PDF to disk, then runs lightweight-first extraction with triage."""
     downloaded_size = 0
-    
-    # We will implement the marker PDF parsing in Phase 2.
-    # For now, we will stream it to disk safely and return an empty string
-    # so the loop doesn't break while we're building the tool.
-    
+
     with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as temp_pdf:
         temp_path = temp_pdf.name
         
@@ -149,19 +181,24 @@ async def _stream_and_process_pdf(response: httpx.Response, log_func) -> str:
             downloaded_size += len(chunk)
             
             if downloaded_size > MAX_PDF_SIZE:
+                telemetry_bump("pdf.truncated")
                 await log_func(f"[Scraper] ⚠️ PDF size exceeded {MAX_PDF_SIZE/1024/1024:.0f}MB. Truncating stream.")
                 break
                 
     size_mb = downloaded_size / (1024 * 1024)
     await log_func(f"[Scraper] Successfully downloaded {size_mb:.2f}MB PDF. Parsing text...")
     
-    # --- Marker processing will be called here ---
     from tools.pdf_parser import extract_markdown_from_pdf
     import asyncio
     
     try:
         # Offload massive synchronous PyTorch loading to a background thread
-        markdown_text = await asyncio.to_thread(extract_markdown_from_pdf, temp_path)
+        markdown_text = await asyncio.to_thread(
+            extract_markdown_from_pdf,
+            temp_path,
+            downloaded_size,
+            RESOURCE_PROFILE,
+        )
         await log_func(f"[PDF Parser] Handled PDF via backend engines. Extracted {len(markdown_text):,} characters.")
         return markdown_text
     except Exception as e:

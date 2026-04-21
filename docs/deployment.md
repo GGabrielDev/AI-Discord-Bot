@@ -50,20 +50,33 @@ ASK_FRESHNESS_PENALTY=0.18
 
 ## Runtime profile knobs
 
-These values tune the general research/crawl runtime for the target machine:
+These values tune the general research/crawl runtime for the target machine, including source prefiltering, ingest budgets, adaptive raw retention, PDF handling, and runtime summaries:
 
 ```env
 RESOURCE_PROFILE=low-memory
 HTTP_MAX_CONNECTIONS=20
 HTTP_MAX_KEEPALIVE_CONNECTIONS=10
 HTTP_KEEPALIVE_EXPIRY=30
+ENABLE_MARKER_PDF=0
+RUNTIME_TELEMETRY_ENABLED=1
+RUNTIME_TELEMETRY_PRINT_SUMMARY=1
+RUNTIME_TELEMETRY_TOP_SOURCES=3
 ```
 
 Profiles:
 
-- `low-memory`: default for BC250-class hardware; fewer scrape targets, smaller summarization windows, tighter HTML/PDF limits
+- `low-memory`: default for BC250-class hardware; fewer scrape targets, stricter prefiltering, tighter HTML/PDF limits, smaller raw retention budgets
 - `balanced`: moderate expansion with less aggressive limits
-- `max-recall`: larger scrape and summarization budgets for stronger machines
+- `max-recall`: larger scrape, ingest, and raw-retention budgets for stronger machines
+
+Additional toggles:
+
+- `ENABLE_MARKER_PDF=1`: allows Marker OCR fallback for text-poor/scanned PDFs on machines with enough RAM; default `0` keeps the lightweight PyMuPDF-first triage path
+- `RUNTIME_TELEMETRY_ENABLED=0`: disables runtime telemetry collection entirely
+- `RUNTIME_TELEMETRY_PRINT_SUMMARY=0`: keeps telemetry counters but suppresses end-of-run console summaries
+- `RUNTIME_TELEMETRY_TOP_SOURCES`: controls how many top sources appear in telemetry summaries
+
+Transient caches for search/planner/query helpers are automatic, in-process only, and reset on bot restart. No target-machine cache service is required.
 
 ## Target-machine validation checklist
 
@@ -87,6 +100,8 @@ Run these on the target machine after deploying new code:
    - run `/ask` on an existing topic
    - interrupt a long `/ask`, restart bot, rerun same request, confirm resume
    - compare one `/research` run under `RESOURCE_PROFILE=low-memory` vs `balanced` and confirm lower source count / lower latency under the low-memory profile
+   - if telemetry is enabled, confirm the run prints a summary with cache/search/source counters
+   - if `ENABLE_MARKER_PDF=1` is used on that machine, test at least one text-poor PDF and confirm fallback/triage behaves acceptably
 
 ## Recovery checklist
 

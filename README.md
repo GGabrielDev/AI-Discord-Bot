@@ -1,6 +1,6 @@
 # AI Discord Research Agent
 
-Autonomous Discord bot for web research, site crawling, and local knowledge-base Q&A.
+Autonomous Discord bot for web research, site crawling, and local knowledge-base Q&A tuned for constrained hardware.
 
 ## What it does
 
@@ -65,7 +65,9 @@ Current codebase includes:
 - local-first `/ask` gap routing with deferred gap queue
 - persistent per-topic gap memory across separate `/ask` runs
 - metadata backfill tool for older Chroma collections
-- dual-ingestion storage (`summary` + `raw`)
+- dual-ingestion storage with adaptive raw retention (`summary` + selective `raw`)
+- hardware-aware runtime profiles with shared client reuse and search-result prefiltering
+- lightweight-first PDF triage, transient in-process caches, and runtime telemetry summaries
 
 ## Maintenance tools
 

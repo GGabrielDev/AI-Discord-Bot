@@ -1,8 +1,10 @@
 import json
 import re
 import asyncio
+import time
 from openai import AsyncOpenAI
 from config.settings import LLM_API_BASE, LLM_API_KEY, LLM_MODEL_NAME, LLM_MAX_TOKENS, LLM_TIMEOUT, SAFE_WORD_BUDGET
+from runtime_telemetry import add as telemetry_add, bump as telemetry_bump, set_max as telemetry_set_max
 
 class LocalLLM:
     """Hardened LLM client optimized for local inference with Gemma 4 E4B.
@@ -44,6 +46,12 @@ class LocalLLM:
         if usage:
             prompt_tok = getattr(usage, 'prompt_tokens', 0) or 0
             completion_tok = getattr(usage, 'completion_tokens', 0) or 0
+            telemetry_bump("llm.calls")
+            telemetry_bump(f"llm.calls.{label.strip().lower() or 'generic'}")
+            telemetry_add("llm.prompt_tokens", prompt_tok)
+            telemetry_add("llm.completion_tokens", completion_tok)
+            telemetry_set_max("llm.max_prompt_tokens", prompt_tok)
+            telemetry_set_max("llm.max_completion_tokens", completion_tok)
             LocalLLM._total_prompt_tokens += prompt_tok
             LocalLLM._total_completion_tokens += completion_tok
             total_session = LocalLLM._total_prompt_tokens + LocalLLM._total_completion_tokens
@@ -80,7 +88,9 @@ class LocalLLM:
                 if attempt > 0:
                     temperature = 0.0  # Force deterministic on retry
                     print(f"[LLM] Retrying JSON generation (attempt {attempt + 1}/{max_retries}, temp=0.0)...")
+                    telemetry_bump("llm.retries")
                 
+                call_started = time.monotonic()
                 response = await asyncio.wait_for(
                     self.client.chat.completions.create(
                         model=self.model,
@@ -93,6 +103,7 @@ class LocalLLM:
                     ),
                     timeout=LLM_TIMEOUT
                 )
+                telemetry_add("llm.seconds", time.monotonic() - call_started)
                 
                 content = response.choices[0].message.content
                 self._log_usage(response, "JSON ")
@@ -110,18 +121,21 @@ class LocalLLM:
                     raise ValueError(f"No JSON found in response: {content[:200]}")
                     
             except asyncio.TimeoutError:
+                telemetry_bump("llm.timeouts")
                 print(f"[LLM] Timeout after {LLM_TIMEOUT}s on attempt {attempt + 1}")
                 if attempt < max_retries - 1:
                     continue
                 print("[LLM] All retries exhausted due to timeout.")
                 return {}
             except json.JSONDecodeError as e:
+                telemetry_bump("llm.json_failures")
                 print(f"[LLM] JSON parse error on attempt {attempt + 1}: {e}")
                 if attempt < max_retries - 1:
                     continue
                 print("[LLM] All retries exhausted. Returning empty dict.")
                 return {}
             except Exception as e:
+                telemetry_bump("llm.errors")
                 print(f"[LLM] Error generating JSON: {e}")
                 return {}
 
@@ -147,7 +161,7 @@ class LocalLLM:
             if total_words > SAFE_WORD_BUDGET:
                 print(f"[LLM] ⚠️ Sending massive payload ({total_words:,} words) which exceeds the safe budget ({SAFE_WORD_BUDGET:,}). Inference may be slow.")
 
-
+            call_started = time.monotonic()
             response = await asyncio.wait_for(
                 self.client.chat.completions.create(
                     model=self.model,
@@ -160,12 +174,15 @@ class LocalLLM:
                 ),
                 timeout=timeout_val
             )
+            telemetry_add("llm.seconds", time.monotonic() - call_started)
             self._log_usage(response, "Text ")
             return self._clean_thinking(response.choices[0].message.content)
         except asyncio.TimeoutError:
+            telemetry_bump("llm.timeouts")
             print(f"[LLM] Timeout after {timeout_val}s during text generation.")
             return ""
         except Exception as e:
+            telemetry_bump("llm.errors")
             print(f"[LLM] Error generating text: {e}")
             return ""
 
@@ -179,6 +196,8 @@ class LocalLLM:
         budget = max_input_words or SAFE_WORD_BUDGET
         words = user_prompt.split()
         if len(words) > budget:
+            telemetry_bump("llm.input_truncations")
+            telemetry_set_max("llm.max_input_words", len(words))
             print(f"[LLM] Truncating input from {len(words)} to {budget} words")
             user_prompt = " ".join(words[:budget]) + "\n\n[... content truncated for context budget]"
         

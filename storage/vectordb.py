@@ -3,7 +3,35 @@ import re
 import time
 import asyncio
 from urllib.parse import urlparse
-from config.settings import CHROMA_DB_PATH
+from config.settings import (
+    CHROMA_DB_PATH,
+    RAW_CHUNK_SOFT_CAP,
+    RAW_DEFAULT_MAX_CHUNKS_PER_SOURCE,
+    RAW_HIGH_VALUE_MAX_CHUNKS_PER_SOURCE,
+    RAW_SMALL_SOURCE_MAX_CHUNKS,
+    RESOURCE_PROFILE,
+)
+
+_RAW_WORTHY_HINTS = (
+    "/api",
+    "/appendix",
+    "/annex",
+    "/compliance",
+    "/code",
+    "/docs",
+    "/documentation",
+    "/guide",
+    "/law",
+    "/manual",
+    "/policy",
+    "/protocol",
+    "/reference",
+    "/regulation",
+    "/rfc",
+    "/schema",
+    "/spec",
+    "/standard",
+)
 
 def _derive_source_domain(source_url: str) -> str:
     try:
@@ -17,6 +45,90 @@ def _derive_path_depth(source_url: str) -> int:
         return len([segment for segment in path.split("/") if segment])
     except Exception:
         return 0
+
+def _is_raw_worthy_source(source_url: str) -> bool:
+    try:
+        parsed = urlparse(source_url)
+        normalized = f"{parsed.netloc}{parsed.path}".lower()
+    except Exception:
+        normalized = source_url.lower()
+    if normalized.endswith(".pdf"):
+        return True
+    return any(hint in normalized for hint in _RAW_WORTHY_HINTS)
+
+def _select_representative_chunks(chunks: list[str], max_chunks: int) -> list[str]:
+    if max_chunks <= 0 or not chunks:
+        return []
+    if len(chunks) <= max_chunks:
+        return list(chunks)
+    if max_chunks == 1:
+        return [chunks[0]]
+
+    total = len(chunks)
+    selected_indexes = []
+    seen = set()
+    for i in range(max_chunks):
+        idx = round(i * (total - 1) / (max_chunks - 1))
+        if idx in seen:
+            right = idx
+            while right < total and right in seen:
+                right += 1
+            if right < total:
+                idx = right
+            else:
+                left = idx
+                while left >= 0 and left in seen:
+                    left -= 1
+                idx = max(0, left)
+        seen.add(idx)
+        selected_indexes.append(idx)
+    return [chunks[i] for i in sorted(selected_indexes)]
+
+def _plan_raw_chunk_retention(source_url: str, raw_chunk_count: int, existing_raw_chunks: int) -> dict:
+    pressure_ratio = (existing_raw_chunks / RAW_CHUNK_SOFT_CAP) if RAW_CHUNK_SOFT_CAP > 0 else 0.0
+    is_small_source = raw_chunk_count <= RAW_SMALL_SOURCE_MAX_CHUNKS
+    is_raw_worthy = _is_raw_worthy_source(source_url)
+
+    if is_small_source:
+        kept = raw_chunk_count
+        tier = "full"
+        reason = "small-source"
+    else:
+        base_cap = RAW_HIGH_VALUE_MAX_CHUNKS_PER_SOURCE if is_raw_worthy else RAW_DEFAULT_MAX_CHUNKS_PER_SOURCE
+        if pressure_ratio >= 1.0 and not is_raw_worthy:
+            kept = 0
+            tier = "summary-only"
+            reason = "soft-cap-pressure"
+        else:
+            pressure_factor = 1.0
+            if pressure_ratio >= 1.0:
+                pressure_factor = 0.5
+            elif pressure_ratio >= 0.75:
+                pressure_factor = 0.75 if is_raw_worthy else 0.5
+            kept = min(raw_chunk_count, max(1, int(round(base_cap * pressure_factor))))
+            if kept >= raw_chunk_count:
+                tier = "full"
+                reason = "high-value" if is_raw_worthy else "within-cap"
+            else:
+                tier = "capped"
+                if pressure_ratio >= 0.75:
+                    reason = "pressure-capped"
+                elif is_raw_worthy:
+                    reason = "high-value-capped"
+                else:
+                    reason = "default-cap"
+
+    return {
+        "raw_storage_profile": RESOURCE_PROFILE,
+        "raw_storage_tier": tier,
+        "raw_storage_reason": reason,
+        "raw_storage_soft_cap": RAW_CHUNK_SOFT_CAP,
+        "raw_storage_pressure": round(pressure_ratio, 3),
+        "source_raw_chunks_planned": raw_chunk_count,
+        "source_raw_chunks_stored": kept,
+        "source_has_raw": 1 if kept > 0 else 0,
+        "source_raw_worthy": 1 if is_raw_worthy else 0,
+    }
 
 class VectorDB:
     def __init__(self, collection_name="research_data"):
@@ -36,28 +148,53 @@ class VectorDB:
             name=safe_name,
             metadata={"hnsw:space": "cosine"}
         )
+        self._raw_chunk_count_cache = None
 
-    async def add_chunks(self, chunks: list[str], source_url: str, chunk_type: str = "summary", source_title: str = ""):
+    async def _get_raw_chunk_count(self) -> int:
+        if self._raw_chunk_count_cache is None:
+            results = await asyncio.to_thread(
+                self.collection.get,
+                where={"chunk_type": "raw"},
+                include=[]
+            )
+            self._raw_chunk_count_cache = len(results.get("ids", []))
+        return self._raw_chunk_count_cache
+
+    async def plan_raw_chunks(self, chunks: list[str], source_url: str) -> tuple[list[str], dict]:
+        if not chunks:
+            return [], _plan_raw_chunk_retention(source_url, 0, 0)
+
+        existing_raw_chunks = await self._get_raw_chunk_count()
+        policy = _plan_raw_chunk_retention(source_url, len(chunks), existing_raw_chunks)
+        kept_chunks = _select_representative_chunks(chunks, policy["source_raw_chunks_stored"])
+        return kept_chunks, policy
+
+    async def add_chunks(self, chunks: list[str], source_url: str, chunk_type: str = "summary", source_title: str = "", extra_metadata: dict | None = None):
         """Saves a list of text chunks into the database with rich metadata."""
         if not chunks:
             return
 
         timestamp = str(int(time.time()))
-        ids = [f"{source_url}_chunk_{i}" for i in range(len(chunks))]
+        ids = [f"{source_url}_{chunk_type}_chunk_{i}" for i in range(len(chunks))]
         source_domain = _derive_source_domain(source_url)
         source_path_depth = _derive_path_depth(source_url)
-        metadatas = [{
-            "source": source_url,
-            "chunk_type": chunk_type,
-            "source_title": source_title,
-            "timestamp": timestamp,
-            "chunk_index": i,
-            "total_chunks": len(chunks),
-            "chunk_word_count": len(chunks[i].split()),
-            "chunk_char_count": len(chunks[i]),
-            "source_domain": source_domain,
-            "source_path_depth": source_path_depth
-        } for i in range(len(chunks))]
+        metadatas = []
+        for i, chunk in enumerate(chunks):
+            metadata = {
+                "source": source_url,
+                "chunk_type": chunk_type,
+                "source_title": source_title,
+                "timestamp": timestamp,
+                "chunk_index": i,
+                "total_chunks": len(chunks),
+                "chunk_word_count": len(chunk.split()),
+                "chunk_char_count": len(chunk),
+                "source_domain": source_domain,
+                "source_path_depth": source_path_depth
+            }
+            if extra_metadata:
+                metadata.update(extra_metadata)
+            metadatas.append(metadata)
 
         # Thread offload for blocking local embedding generation
         await asyncio.to_thread(
@@ -66,6 +203,8 @@ class VectorDB:
             metadatas=metadatas,
             ids=ids
         )
+        if chunk_type == "raw" and self._raw_chunk_count_cache is not None:
+            self._raw_chunk_count_cache += len(chunks)
         print(f"[VectorDB] Stored {len(chunks)} {chunk_type} chunks from {source_url}")
 
     async def has_source(self, source_url: str) -> bool:

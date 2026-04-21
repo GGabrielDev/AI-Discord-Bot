@@ -36,7 +36,7 @@ async def clean_collection(collection_name: str, topic_name: str, dry_run: bool 
 
     for url, entries in url_map.items():
         # Check if this URL has chunks from different processing sessions
-        # (Chroma chunk IDs are formatted as 'URL_chunk_index')
+        # (Chunk IDs are URL-scoped and include chunk type/index.)
         # We group by the 'base' index if possible, but the best way is to 
         # check if multiple 'chunk 0's exist, or if timestamps differ significantly.
         

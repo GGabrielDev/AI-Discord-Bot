@@ -1,6 +1,7 @@
 import re
 from llm.client import LocalLLM
 from config.settings import SAFE_WORD_BUDGET, SUMMARIZER_WORDS_PER_CALL_RATIO
+from runtime_telemetry import add as telemetry_add, bump as telemetry_bump, note_source as telemetry_note_source
 
 # Safety ceiling: max words we'll ever feed to the LLM in a single call.
 MAX_INPUT_WORDS = SAFE_WORD_BUDGET
@@ -145,6 +146,8 @@ async def summarize_page(raw_text: str, subject: str, url: str, log_func=None) -
     
     # Short enough to fit in one call
     if len(words) <= MAX_WORDS_PER_CALL:
+        telemetry_bump("summarizer.single_call_pages")
+        telemetry_note_source(url, summary_words=len(words))
         user_prompt = (
             f"RESEARCH TOPIC: {subject}\n"
             f"SOURCE URL: {url}\n\n"
@@ -167,6 +170,9 @@ async def summarize_page(raw_text: str, subject: str, url: str, log_func=None) -
         section = " ".join(words[i:i + MAX_WORDS_PER_CALL])
         sections.append(section)
     
+    telemetry_bump("summarizer.long_pages")
+    telemetry_add("summarizer.sections_total", len(sections))
+    telemetry_note_source(url, summary_words=len(words))
     await log(f"[Summarizer] Long page ({len(words):,} words) — splitting into {len(sections)} sections...")
     
     partial_summaries = []
@@ -180,6 +186,7 @@ async def summarize_page(raw_text: str, subject: str, url: str, log_func=None) -
         )
         
         await log(f"[Summarizer] Processing section {idx + 1}/{len(sections)}...")
+        telemetry_bump("summarizer.section_calls")
         partial = await llm.generate_text_with_budget(
             system_prompt, user_prompt, max_input_words=MAX_INPUT_WORDS, temperature=0.3
         )
@@ -211,6 +218,7 @@ async def summarize_page(raw_text: str, subject: str, url: str, log_func=None) -
     consolidation_prompt += "Produce the final consolidated summary:"
     
     await log(f"[Summarizer] Consolidating {len(partial_summaries)} section summaries...")
+    telemetry_bump("summarizer.consolidations")
     final_summary = await llm.generate_text_with_budget(
         "You are a research editor. Consolidate multiple partial summaries into one cohesive document. "
         "Preserve all unique facts and remove duplicates.",

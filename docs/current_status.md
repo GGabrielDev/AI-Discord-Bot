@@ -2,7 +2,7 @@
 
 ## Summary
 
-Project is in a usable but still evolving state. Core research, crawl, and query flows exist and are integrated. Recent work improved checkpoint recovery and local-first gap handling.
+Project is in a usable but still evolving state. Core research, crawl, and query flows exist and are integrated. The recent low-end optimization wave is now landed alongside checkpoint recovery and local-first gap handling.
 
 ## Implemented
 
@@ -20,7 +20,7 @@ Project is in a usable but still evolving state. Core research, crawl, and query
 
 - dual-ingestion storage:
   - `summary` chunks
-  - `raw` chunks
+  - adaptive `raw` chunks for high-value sources under profile-aware caps
 - URL-level duplicate avoidance
 - content-hash duplicate avoidance
 - source metadata on chunk writes
@@ -52,8 +52,11 @@ Project is in a usable but still evolving state. Core research, crawl, and query
   - `low-memory`
   - `balanced`
   - `max-recall`
-- cheap search-result prefilter before scrape/summarize
-- tighter low-memory HTML/PDF ingest budgets
+- profile-aware search-result prefilter before scrape/summarize
+- lightweight-first PDF triage with optional Marker escalation for text-poor PDFs
+- transient in-process caches for search responses, planner work, query expansion, and gap extraction
+- adaptive raw retention budgets tied to the active runtime profile
+- runtime telemetry summaries for cache hits, search keep/reject counts, route decisions, and top sources
 
 ### Maintenance
 
@@ -80,6 +83,6 @@ Project is in a usable but still evolving state. Core research, crawl, and query
 
 ## Recommended next work
 
-1. Add PDF preflight so large/low-text PDFs can be skipped or downgraded before expensive parsing
-2. Add transient caches for search responses, planner outputs, and source probes
-3. Add storage pruning and cold-data policies for long-running collections
+1. Add storage pruning and cold-data policies for long-running collections
+2. Promote runtime telemetry beyond console summaries when long-run observability is needed
+3. Validate profile and gap-routing thresholds on more target-machine datasets

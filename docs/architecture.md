@@ -5,9 +5,10 @@
 ```text
 Discord
   ├── /research
-  │     ├── planner -> search -> scraper -> summarizer
+  │     ├── planner -> search -> profile prefilter -> scraper -> summarizer
   │     ├── ChromaDB storage
   │     ├── markdown article archive
+  │     ├── runtime telemetry
   │     └── checkpoint persistence
   ├── /crawl_site
   │     ├── domain-locked crawler
@@ -54,17 +55,28 @@ The project stores data in two forms:
    - final reports
    - human-readable audit trail
 
+## Runtime optimizations
+
+- shared AsyncOpenAI and HTTP clients are reused across hot paths
+- runtime profiles drive search prefilter thresholds, HTML/PDF ingest caps, and raw-retention budgets
+- PDF handling is lightweight-first, with optional Marker escalation for text-poor/scanned files
+- transient in-process caches reduce repeated planner, search, and query-helper work inside a bot session
+- runtime telemetry tracks cache/search/LLM/source activity and prints a concise summary at the end of a run
+
 ## `/research` flow
 
 1. Generate search queries for the subject
 2. Query SearXNG
-3. Scrape HTML or PDF sources
-4. Deduplicate by URL and content hash
-5. Summarize content through local LLM
-6. Store `summary` and `raw` chunks in ChromaDB
-7. Save markdown article to disk
-8. Re-evaluate knowledge gaps and generate next iteration queries
-9. Persist checkpoints after meaningful progress
+3. Apply profile-aware search prefiltering before expensive fetches
+4. Scrape HTML or PDF sources
+5. Use lightweight-first PDF triage when the source is a PDF
+6. Deduplicate by URL and content hash
+7. Summarize content through local LLM
+8. Store `summary` and adaptively retained `raw` chunks in ChromaDB
+9. Save markdown article to disk
+10. Re-evaluate knowledge gaps and generate next iteration queries
+11. Persist checkpoints after meaningful progress
+12. Emit runtime telemetry summary if enabled
 
 ## `/ask` flow
 
