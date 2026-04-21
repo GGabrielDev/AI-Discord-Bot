@@ -137,6 +137,33 @@ def dequeue_gap_batch(gap_state: dict, limit: int = MAX_GAPS_PER_CYCLE) -> tuple
     return selected_queries, len(remaining_keys)
 
 
+def restore_gap_batch(gap_state: dict, gap_queries: list[str]) -> dict:
+    if not gap_queries:
+        return gap_state
+
+    gap_state = ensure_gap_state(gap_state)
+    pending = gap_state["pending"]
+    restored_keys = []
+
+    for gap_query in gap_queries:
+        normalized = normalize_gap_query(gap_query)
+        if not normalized:
+            continue
+        ensure_gap_meta(gap_state, normalized, gap_query)
+        best_query = pending.get(normalized)
+        if best_query is None or len(gap_query) > len(best_query):
+            pending[normalized] = gap_query
+        if normalized not in restored_keys:
+            restored_keys.append(normalized)
+
+    if not restored_keys:
+        return gap_state
+
+    gap_state["order"] = restored_keys + [gap_key for gap_key in gap_state["order"] if gap_key not in restored_keys]
+    gap_state["pending"] = {gap_key: pending[gap_key] for gap_key in gap_state["order"] if gap_key in pending}
+    return gap_state
+
+
 def merge_gap_memory(runtime_state: dict | None, saved_memory: dict | None) -> dict:
     runtime_state = ensure_gap_state(runtime_state)
     if not saved_memory:

@@ -9,6 +9,7 @@ from agent.ask_state import (
     quality_from_meta,
     queue_gap_queries,
     record_gap_probe,
+    restore_gap_batch,
     select_gap_route,
     set_gap_route,
 )
@@ -82,6 +83,18 @@ class AskStateTests(unittest.TestCase):
         merged = merge_gap_memory(state, memory)
         self.assertEqual(merged["repeat_counts"]["legacy chemistry detail"], 4)
         self.assertEqual(merged["details"]["legacy chemistry detail"]["last_route"], "partial_local")
+
+    def test_restore_gap_batch_requeues_without_bumping_repeat_counts(self):
+        state = ensure_gap_state(None)
+        queue_gap_queries(state, ["gap one", "gap two", "gap three"])
+
+        batch, deferred = dequeue_gap_batch(state, limit=2)
+        self.assertEqual(batch, ["gap one", "gap two"])
+        self.assertEqual(deferred, 1)
+
+        restore_gap_batch(state, ["gap two"])
+        self.assertEqual(state["order"], ["gap two", "gap three"])
+        self.assertEqual(state["repeat_counts"]["gap two"], 1)
 
     def test_quality_penalizes_stale_sources_and_explains_route(self):
         fresh_score = quality_from_meta({

@@ -1,5 +1,6 @@
 import asyncio
 import argparse
+import copy
 import hashlib
 import re
 from storage.vectordb import VectorDB
@@ -19,6 +20,7 @@ from agent.ask_state import (
     queue_gap_queries,
     record_gap_probe,
     record_gap_web_outcome,
+    restore_gap_batch,
     select_gap_route,
     set_gap_route,
     safe_float,
@@ -291,6 +293,116 @@ async def deep_internal_probe(db: VectorDB, llm: LocalLLM, gap_query: str, mode:
         "has_partial_answer": bool(answer_text.strip())
     }
 
+
+def _merge_extra_context(existing_context: str | None, new_context: str | None) -> str | None:
+    existing_context = existing_context or ""
+    new_context = new_context or ""
+    if not new_context.strip():
+        return existing_context or None
+    if not existing_context.strip():
+        return new_context
+    if new_context in existing_context:
+        return existing_context
+    return f"{existing_context}\n\n{new_context}"
+
+
+def _checkpoint_gap_state(gap_state: dict, remaining_batch: list[str]) -> dict:
+    if not remaining_batch:
+        return gap_state
+    checkpoint_gap_state = copy.deepcopy(gap_state)
+    restore_gap_batch(checkpoint_gap_state, remaining_batch)
+    return checkpoint_gap_state
+
+
+async def _process_gap_batch(
+    *,
+    topic: str,
+    mode: str,
+    no_web: bool,
+    gap_batch: list[str],
+    draft_text: str,
+    extra_context: str | None,
+    gap_state: dict,
+    current_auto_loop: int,
+    db: VectorDB,
+    llm: LocalLLM,
+    log_func,
+    persist_ask_state,
+):
+    from agent.loop import run_autonomous_loop
+
+    async def loc_log(m, is_sub_step=False):
+        print(m)
+        if log_func:
+            await log_func(m, is_sub_step)
+
+    accumulated_context = extra_context
+    for idx, gap_query in enumerate(gap_batch):
+        remaining_batch = gap_batch[idx:]
+        if check_soft_stop():
+            restore_gap_batch(gap_state, remaining_batch)
+            persist_ask_state(draft_text, accumulated_context, gap_state)
+            await loc_log("🛑 **Soft Stop Acknowledged:** Gracefully abandoning remaining gap queries.")
+            return accumulated_context, True
+
+        await loc_log(f"🚀 *Gap Tracker {idx+1}/{len(gap_batch)}* -> `{gap_query}`")
+        probe = await deep_internal_probe(db, llm, gap_query, mode, log_func=log_func)
+        gap_meta = record_gap_probe(gap_state, gap_query, probe, current_auto_loop)
+        route = select_gap_route(gap_meta, probe, no_web)
+        telemetry_bump(f"gap.route.{route}")
+
+        sip_context = build_gap_context(gap_query, probe)
+        if route == "resolved_local":
+            set_gap_route(gap_meta, route, current_auto_loop)
+            await loc_log(
+                f"✅ **SIP MATCH:** {explain_gap_route(gap_meta, probe, route, no_web)}. Web skipped.",
+                is_sub_step=True
+            )
+        elif route == "partial_local":
+            set_gap_route(gap_meta, route, current_auto_loop, 1)
+            await loc_log(
+                f"🧩 **Partial local evidence retained:** {explain_gap_route(gap_meta, probe, route, no_web)}.",
+                is_sub_step=True
+            )
+        elif route == "blocked_offline":
+            set_gap_route(gap_meta, route, current_auto_loop, 1)
+            await loc_log(f"⚠️ **Local-Only Mode:** {explain_gap_route(gap_meta, probe, route, no_web)}.", is_sub_step=True)
+        elif route == "defer_local":
+            set_gap_route(gap_meta, route, current_auto_loop, 1)
+            await loc_log(
+                f"⏸️ **Deferring local retry:** {explain_gap_route(gap_meta, probe, route, no_web)}.",
+                is_sub_step=True
+            )
+        else:
+            await loc_log(
+                f"🌐 **Web escalation triggered:** {explain_gap_route(gap_meta, probe, route, no_web)}.",
+                is_sub_step=True
+            )
+            web_sources_added = 0
+            web_failed = False
+            try:
+                web_sources_added = await run_autonomous_loop(
+                    subject=gap_query,
+                    topic=topic,
+                    max_iterations=1,
+                    depth=5,
+                    log_func=log_func
+                )
+            except Exception as e:
+                web_failed = True
+                await loc_log(f"🚨 Sub-tracker failed on `{gap_query}`: {e}")
+            telemetry_add("gap.web_sources_added", web_sources_added)
+            record_gap_web_outcome(gap_meta, current_auto_loop, web_sources_added, web_failed)
+
+        accumulated_context = _merge_extra_context(accumulated_context, sip_context)
+        persist_ask_state(
+            draft_text,
+            accumulated_context,
+            _checkpoint_gap_state(gap_state, gap_batch[idx + 1:])
+        )
+
+    return accumulated_context, False
+
 STYLE_CONFIG = {
     "Concise": {
         "description": "Standard high-level intelligence report. Direct, efficient, and technical.",
@@ -349,9 +461,6 @@ async def answer_question(topic: str, question: str, mode: str = "Balanced", sty
         f"ask:{question}",
         metadata={"topic": topic, "mode": mode, "style": style, "language": language, "local_only": no_web},
     ):
-        # Import here to avoid circular imports if query.py is loaded first
-        from agent.loop import run_autonomous_loop
-    
         # Global logging helper for this session
         async def log(msg: str, is_sub_step: bool = False):
             print(msg)
@@ -387,7 +496,11 @@ async def answer_question(topic: str, question: str, mode: str = "Balanced", sty
         def persist_gap_history():
             save_gap_memory(topic, build_gap_memory_snapshot(gap_state))
 
-        def persist_ask_state(draft_text: str | None, extra_context: str | None = None):
+        def persist_ask_state(
+            draft_text: str | None,
+            extra_context: str | None = None,
+            checkpoint_gap_state: dict | None = None
+        ):
             save_ask_checkpoint(
                 topic=topic,
                 question=question,
@@ -397,7 +510,7 @@ async def answer_question(topic: str, question: str, mode: str = "Balanced", sty
                 no_web=no_web,
                 current_auto_loop=_current_auto_loop,
                 draft=draft_text,
-                gap_state=gap_state,
+                gap_state=checkpoint_gap_state if checkpoint_gap_state is not None else gap_state,
                 extra_context=extra_context
             )
             persist_gap_history()
@@ -406,6 +519,15 @@ async def answer_question(topic: str, question: str, mode: str = "Balanced", sty
             delete_ask_checkpoint(topic, question, mode, style, language, no_web)
             persist_gap_history()
 
+        def has_pending_gap_queue() -> bool:
+            return bool(gap_state.get("order"))
+
+        async def log_retained_gap_checkpoint(stage: str):
+            if has_pending_gap_queue():
+                await log(
+                    f"📦 **{len(gap_state['order'])} deferred knowledge gaps remain queued after {stage}. Checkpoint retained for resume.**"
+                )
+
         if _current_auto_loop == 0:
             persist_ask_state(_draft, _extra_context)
 
@@ -413,9 +535,15 @@ async def answer_question(topic: str, question: str, mode: str = "Balanced", sty
         # If a draft is provided at the start, skip redundant broad searches 
         # and jump straight to gap extraction.
         if _draft and _current_auto_loop == 0:
-            if resumed_ask and gap_state["order"]:
-                await log("📦 **Resuming from saved /ask checkpoint.** Continuing pending gap queue...")
-                queued_gap_count = len(gap_state["order"])
+            if resumed_ask:
+                if gap_state["order"]:
+                    await log("📦 **Resuming from saved /ask checkpoint.** Continuing pending gap queue...")
+                    queued_gap_count = len(gap_state["order"])
+                elif _extra_context:
+                    await log("📦 **Resuming from saved /ask checkpoint.** Applying saved batch context before continuing...")
+                    queued_gap_count = 0
+                else:
+                    queued_gap_count = 0
             else:
                 await log("📦 **Resuming from provided report.** Parsing knowledge gaps...")
                 gap_queries = await extract_gap_queries(llm, _draft)
@@ -424,66 +552,27 @@ async def answer_question(topic: str, question: str, mode: str = "Balanced", sty
                 queued_gap_count = len(gap_state["order"])
 
             if queued_gap_count:
-                gap_batch, deferred_gap_count = dequeue_gap_batch(gap_state)
                 persist_ask_state(_draft, _extra_context)
+                gap_batch, deferred_gap_count = dequeue_gap_batch(gap_state)
                 await log(
                     f"🎯 **Queued {queued_gap_count} resumed gaps. Processing {len(gap_batch)} now; {deferred_gap_count} deferred.**",
                     is_sub_step=True
                 )
-                # Jump straight to Phase 6 (Re-research)
-                # We recreate the loc_log closure here for consistency
-                async def loc_log(m, is_sub_step=False):
-                    print(m)
-                    if log_func: await log_func(m, is_sub_step)
-            
-                # Start loop
-                for idx, gap_query in enumerate(gap_batch):
-                    if check_soft_stop(): break
-                    await loc_log(f"🔎 *Targeting Gap {idx+1}/{len(gap_batch)}:* `{gap_query}`")
-                    probe = await deep_internal_probe(db, llm, gap_query, mode, log_func=log_func)
-                    gap_meta = record_gap_probe(gap_state, gap_query, probe, _current_auto_loop)
-                    route = select_gap_route(gap_meta, probe, no_web)
-                    telemetry_bump(f"gap.route.{route}")
-                
-                    sip_context = build_gap_context(gap_query, probe)
-                    if route == "resolved_local":
-                        set_gap_route(gap_meta, route, _current_auto_loop)
-                        await loc_log(
-                            f"✅ **SIP MATCH:** {explain_gap_route(gap_meta, probe, route, no_web)}. Web skipped.",
-                            is_sub_step=True
-                        )
-                    elif route == "partial_local":
-                        set_gap_route(gap_meta, route, _current_auto_loop, 1)
-                        await loc_log(
-                            f"🧩 **Partial local evidence retained:** {explain_gap_route(gap_meta, probe, route, no_web)}.",
-                            is_sub_step=True
-                        )
-                    elif route == "blocked_offline":
-                        set_gap_route(gap_meta, route, _current_auto_loop, 1)
-                        await loc_log(f"⚠️ **Local-Only Mode:** {explain_gap_route(gap_meta, probe, route, no_web)}.", is_sub_step=True)
-                    elif route == "defer_local":
-                        set_gap_route(gap_meta, route, _current_auto_loop, 1)
-                        await loc_log(
-                            f"⏸️ **Deferring local retry:** {explain_gap_route(gap_meta, probe, route, no_web)}.",
-                            is_sub_step=True
-                        )
-                    else:
-                        await loc_log(
-                            f"🌐 **Web escalation triggered:** {explain_gap_route(gap_meta, probe, route, no_web)}.",
-                            is_sub_step=True
-                        )
-                        web_sources_added = 0
-                        web_failed = False
-                        try:
-                            web_sources_added = await run_autonomous_loop(gap_query, topic, max_iterations=1, depth=3, log_func=log_func)
-                        except Exception as e:
-                            web_failed = True
-                            await loc_log(f"🚨 Sub-tracker failed on `{gap_query}`: {e}")
-                        telemetry_add("gap.web_sources_added", web_sources_added)
-                        record_gap_web_outcome(gap_meta, _current_auto_loop, web_sources_added, web_failed)
-                        persist_ask_state(_draft, sip_context)
-                
-                    # Recursive call to update the draft with info from this gap
+                batch_context, batch_interrupted = await _process_gap_batch(
+                    topic=topic,
+                    mode=mode,
+                    no_web=no_web,
+                    gap_batch=gap_batch,
+                    draft_text=_draft,
+                    extra_context=_extra_context,
+                    gap_state=gap_state,
+                    current_auto_loop=_current_auto_loop,
+                    db=db,
+                    llm=llm,
+                    log_func=log_func,
+                    persist_ask_state=persist_ask_state,
+                )
+                if not batch_interrupted:
                     answer = await answer_question(
                         topic=topic,
                         question=question,
@@ -492,23 +581,21 @@ async def answer_question(topic: str, question: str, mode: str = "Balanced", sty
                         log_func=log_func,
                         draft_callback=draft_callback,
                         language=language,
-                        no_web=no_web, # Pass the flag
+                        no_web=no_web,
                         _current_auto_loop=_current_auto_loop + 1,
-                        _draft=_draft, # Update the resumable draft
-                        _extra_context=sip_context,
+                        _draft=_draft,
+                        _extra_context=batch_context,
                         _gap_state=gap_state
                     )
+                    _draft = answer["english"] if isinstance(answer, dict) else answer
+                    persist_ask_state(_draft, None)
 
-                    # If recursion returns a dict (top-level), return it. 
-                    # Otherwise update local draft.
-                    if isinstance(answer, dict) and _current_auto_loop != 0:
-                        return answer["english"]
-                    _draft = answer
-                    persist_ask_state(_draft, sip_context)
-                
                 if _current_auto_loop == 0:
-                    result = await finalize_dual_report(llm, _draft, topic, language, mode, check_soft_stop())
-                    clear_ask_state()
+                    result = await finalize_dual_report(llm, _draft, topic, language, mode, batch_interrupted or check_soft_stop())
+                    if not batch_interrupted and not has_pending_gap_queue():
+                        clear_ask_state()
+                    elif not batch_interrupted:
+                        await log_retained_gap_checkpoint("this refinement cycle")
                     return result
                 return _draft
             else:
@@ -731,7 +818,10 @@ async def answer_question(topic: str, question: str, mode: str = "Balanced", sty
             # If it's a recursive call, return the EN string for continued refinement.
             if _current_auto_loop == 0:
                 result = await finalize_dual_report(llm, answer, topic, language, mode, is_interrupted)
-                clear_ask_state()
+                if has_pending_gap_queue():
+                    await log_retained_gap_checkpoint("this refinement cycle")
+                else:
+                    clear_ask_state()
                 return result
             return answer
         
@@ -746,6 +836,7 @@ async def answer_question(topic: str, question: str, mode: str = "Balanced", sty
             if log_func: await log_func(m, is_sub_step)
 
         queued_gap_count = len(gap_state["order"])
+        preserve_checkpoint = False
         if queued_gap_count:
             # Deliver intermediate draft file so the user can see the gaps before it stalls researching
             if draft_callback:
@@ -763,66 +854,21 @@ async def answer_question(topic: str, question: str, mode: str = "Balanced", sty
                     f"🎯 *No new gaps extracted. Resuming deferred queue: {len(gap_batch)} now; {deferred_gap_count} still deferred.*",
                     is_sub_step=True
                 )
-        
-            for idx, gap_query in enumerate(gap_batch):
-                # Soft stop inter-query check
-                if check_soft_stop():
-                    await loc_log("🛑 **Soft Stop Acknowledged:** Gracefully abandoning remaining gap queries.")
-                    break
-                
-                await loc_log(f"🚀 *Gap Tracker {idx+1}/{len(gap_batch)}* -> `{gap_query}`")
-
-                # --- TASK: DEEP SEMANTIC INTERNAL PROBING (SIP) ---
-                # We try to solve the gap using what we HAVE before hitting the web
-                probe = await deep_internal_probe(db, llm, gap_query, mode, log_func=log_func)
-                gap_meta = record_gap_probe(gap_state, gap_query, probe, _current_auto_loop)
-                route = select_gap_route(gap_meta, probe, no_web)
-                telemetry_bump(f"gap.route.{route}")
-            
-                sip_context = build_gap_context(gap_query, probe)
-                if route == "resolved_local":
-                    set_gap_route(gap_meta, route, _current_auto_loop)
-                    await loc_log(
-                        f"✅ **SIP MATCH:** {explain_gap_route(gap_meta, probe, route, no_web)}. Web skipped.",
-                        is_sub_step=True
-                    )
-                elif route == "partial_local":
-                    set_gap_route(gap_meta, route, _current_auto_loop, 1)
-                    await loc_log(
-                        f"🧩 **Partial local evidence retained:** {explain_gap_route(gap_meta, probe, route, no_web)}.",
-                        is_sub_step=True
-                    )
-                elif route == "blocked_offline":
-                    set_gap_route(gap_meta, route, _current_auto_loop, 1)
-                    await loc_log(f"⚠️ **Local-Only Mode:** {explain_gap_route(gap_meta, probe, route, no_web)}.", is_sub_step=True)
-                elif route == "defer_local":
-                    set_gap_route(gap_meta, route, _current_auto_loop, 1)
-                    await loc_log(
-                        f"⏸️ **Deferring local retry:** {explain_gap_route(gap_meta, probe, route, no_web)}.",
-                        is_sub_step=True
-                    )
-                else:
-                    await loc_log(
-                        f"🌐 **Web escalation triggered:** {explain_gap_route(gap_meta, probe, route, no_web)}.",
-                        is_sub_step=True
-                    )
-                    web_sources_added = 0
-                    web_failed = False
-                    try:
-                        web_sources_added = await run_autonomous_loop(
-                            subject=gap_query,
-                            topic=topic,
-                            max_iterations=1,
-                            depth=5,
-                            log_func=log_func
-                        )
-                    except Exception as e:
-                        web_failed = True
-                        await loc_log(f"🚨 Sub-tracker failed on `{gap_query}`: {e}")
-                    telemetry_add("gap.web_sources_added", web_sources_added)
-                    record_gap_web_outcome(gap_meta, _current_auto_loop, web_sources_added, web_failed)
-                    persist_ask_state(answer, sip_context)
-
+            batch_context, preserve_checkpoint = await _process_gap_batch(
+                topic=topic,
+                mode=mode,
+                no_web=no_web,
+                gap_batch=gap_batch,
+                draft_text=answer,
+                extra_context=_extra_context,
+                gap_state=gap_state,
+                current_auto_loop=_current_auto_loop,
+                db=db,
+                llm=llm,
+                log_func=log_func,
+                persist_ask_state=persist_ask_state,
+            )
+            if not preserve_checkpoint:
                 answer = await answer_question(
                     topic=topic,
                     question=question,
@@ -834,18 +880,24 @@ async def answer_question(topic: str, question: str, mode: str = "Balanced", sty
                     no_web=no_web,
                     _current_auto_loop=_current_auto_loop + 1,
                     _draft=answer,
-                    _extra_context=sip_context,
+                    _extra_context=batch_context,
                     _gap_state=gap_state
                 )
-                persist_ask_state(answer if not isinstance(answer, dict) else answer.get("english"), sip_context)
+                persist_ask_state(answer if not isinstance(answer, dict) else answer.get("english"), None)
     
         # Final Guard: Ensure loop 0 always returns the Dual Report Dict
         if _current_auto_loop == 0:
             if isinstance(answer, dict):
-                clear_ask_state()
+                if not preserve_checkpoint and not has_pending_gap_queue():
+                    clear_ask_state()
+                elif not preserve_checkpoint:
+                    await log_retained_gap_checkpoint("this refinement cycle")
                 return answer
             result = await finalize_dual_report(llm, answer, topic, language, mode, check_soft_stop())
-            clear_ask_state()
+            if not preserve_checkpoint and not has_pending_gap_queue():
+                clear_ask_state()
+            elif not preserve_checkpoint:
+                await log_retained_gap_checkpoint("this refinement cycle")
             return result
     
         # Recursive layers just return the EN string
