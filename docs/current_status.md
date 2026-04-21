@@ -65,6 +65,7 @@ Project is in a usable but still evolving state. Core research, crawl, and query
   - SearXNG
   - Discord token and network access
 - local code edits can be statically checked, but real end-to-end validation must happen on deployment machine
+- deployment and runtime validation steps are documented in `docs/deployment.md`
 
 ## Recommended next work
 

@@ -114,3 +114,5 @@ This repository may be edited on one machine and executed on another. Validate r
 - the real model server
 - the real Discord token
 - the real network and scraper environment
+
+Use [`deployment.md`](deployment.md) as the target-machine runbook.

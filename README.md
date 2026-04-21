@@ -78,6 +78,7 @@ PYTHONPATH=. ./bin/python tools/backfill_metadata.py --topic radio_research --ex
 
 - [`docs/index.md`](docs/index.md) — documentation hub
 - [`docs/architecture.md`](docs/architecture.md) — system structure and data flow
+- [`docs/deployment.md`](docs/deployment.md) — target-machine deployment, validation, and tuning
 - [`docs/operations.md`](docs/operations.md) — setup, run, maintenance, recovery
 - [`docs/current_status.md`](docs/current_status.md) — current capabilities, recent changes, known limits
 - [`docs/llama_server.md`](docs/llama_server.md) — model server tuning
