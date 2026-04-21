@@ -65,6 +65,12 @@ Project is in a usable but still evolving state. Core research, crawl, and query
 - adaptive raw retention budgets tied to the active runtime profile
 - runtime telemetry summaries for cache hits, search keep/reject counts, route decisions, and top sources
 
+### Progress reporting
+
+- shared Discord + console progress logger for long-running commands
+- editable progress messages with automatic continuation rollover
+- completion delivery no longer relies only on editing the original interaction response
+
 ### Maintenance
 
 - duplicate cleanup tool

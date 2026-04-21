@@ -10,6 +10,7 @@ Autonomous Discord bot for web research, site crawling, and local knowledge-base
 - `/translate` converts an uploaded markdown report into a target language
 - `/chain_research` decomposes a large topic into multiple research branches
 - `/finish` requests a graceful stop
+- long-running commands use shared progress logging with edited status messages and automatic continuation messages when updates become too large or too old to keep extending safely
 
 ## Core stack
 

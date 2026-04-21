@@ -51,6 +51,14 @@
 | `/chain_research` | decompose one large problem into multiple research loops |
 | `/finish` | soft-stop active long-running loops |
 
+## Progress and logging behavior
+
+- long-running commands acknowledge quickly, then continue progress reporting through shared channel-managed status messages
+- status messages are edited while they stay within safe size and age limits
+- when a status message becomes too large or too old for reliable continued editing, the bot automatically rolls over into a new continuation message
+- final files and completion notices are delivered through fresh channel messages so success does not depend on a long-lived interaction edit
+- console output mirrors the same progress stream with more troubleshooting detail
+
 ## Recovery
 
 ### Research and chain resume

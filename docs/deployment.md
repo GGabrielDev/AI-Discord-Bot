@@ -103,6 +103,7 @@ Run these on the target machine after deploying new code:
     - compare one `/research` run under `RESOURCE_PROFILE=low-memory` vs `balanced` and confirm lower source count / lower latency under the low-memory profile
     - if telemetry is enabled, confirm the run prints a summary with cache/search/source counters
     - if `ENABLE_MARKER_PDF=1` is used on that machine, test at least one text-poor PDF and confirm fallback/triage behaves acceptably
+    - confirm long-running commands roll over into continuation progress messages instead of failing when a single status message becomes too large or stale
 
 ## Recovery checklist
 

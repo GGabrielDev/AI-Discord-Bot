@@ -7,6 +7,7 @@ import chromadb
 from agent.loop import run_autonomous_loop
 from agent.crawler import run_focused_crawler
 from agent.wiki_builder import generate_index_page
+from progress_logger import SharedProgressLogger
 from query import (
     answer_question,
     build_translated_report_filename,
@@ -71,22 +72,10 @@ from storage.vectordb import VectorDB
 async def crawl_site(interaction: discord.Interaction, url: str, topic: str, max_pages: int = 20, max_depth: int = 3):
     # Truncate long URLs if they exceed limits
     safe_url = (url[:100] + '...') if len(url) > 100 else url
-    await interaction.response.send_message(f"### 🕷️ Site Crawler Initialized: {topic}\n> **Target:** <{safe_url}>\n\n⚙️ **Calibrating Domain Shield...**")
-    
-    status_message = None
-    async def discord_logger(message: str, is_sub_step: bool = False):
-        nonlocal status_message
-        try:
-            if not is_sub_step:
-                status_message = await interaction.channel.send(f"> {message}")
-            elif status_message:
-                new_content = status_message.content + f"\n> ↳ {message}"
-                if len(new_content) > 1900:
-                    status_message = await interaction.channel.send(f"> ↳ {message} (continued...)")
-                else:
-                    await status_message.edit(content=new_content)
-        except Exception:
-            pass
+    progress = SharedProgressLogger(interaction)
+    await progress.acknowledge(
+        f"### 🕷️ Site Crawler Initialized: {topic}\n> **Target:** <{safe_url}>\n\n⚙️ **Calibrating Domain Shield...**"
+    )
 
     try:
         count = await run_focused_crawler(
@@ -94,11 +83,14 @@ async def crawl_site(interaction: discord.Interaction, url: str, topic: str, max
             topic=topic,
             max_pages=max_pages,
             max_depth=max_depth,
-            log_func=discord_logger
+            log_func=progress
         )
-        await interaction.channel.send(f"✅ **Crawl Complete!** Successfully ingested {count} pages from the target domain into `{topic}`.")
+        await progress.send_message(
+            f"✅ **Crawl Complete!** Successfully ingested {count} pages from the target domain into `{topic}`.",
+            prefer_channel=True,
+        )
     except Exception as e:
-        await interaction.channel.send(f"❌ **Fatal Crawler Error:** {e}")
+        await progress.send_message(f"❌ **Fatal Crawler Error:** {e}", prefer_channel=True)
 
 # --- Slash Commands ---
 
@@ -112,34 +104,16 @@ async def crawl_site(interaction: discord.Interaction, url: str, topic: str, max
 @app_commands.autocomplete(topic=topic_autocomplete) # Use the same autocomplete we built!
 async def research(interaction: discord.Interaction, subject: str, iterations: int = 3, depth: int = 2, topic: str = None):
     topic_val = topic if topic else subject
+    progress = SharedProgressLogger(interaction)
     
     # Check for an interrupted session and notify the user
     checkpoint = load_checkpoint(subject)
     if checkpoint and checkpoint.get("status") == "in_progress":
-        await interaction.response.send_message(f"⚡ **RESUMING INTERRUPTED SESSION** — Subject: `{subject}`")
+        await progress.acknowledge(f"⚡ **RESUMING INTERRUPTED SESSION** — Subject: `{subject}`")
     else:
         # Safe truncation for echoing back potentially long subjects
         safe_subject = (subject[:100] + '...') if len(subject) > 100 else subject
-        await interaction.response.send_message(f"🏗️ **Building Research Environment for `{safe_subject}`...**")
-    
-    status_message = None
-    
-    # This is the "Bridge" function
-    async def discord_logger(message, is_sub_step=False):
-        nonlocal status_message
-        try:
-            if not is_sub_step:
-                status_message = await interaction.channel.send(f"> {message}")
-            elif status_message:
-                # Append to the dashboard message
-                new_content = status_message.content + f"\n> ↳ {message}"
-                # Guard against Discord's 2000 char message limit
-                if len(new_content) > 1900:
-                    status_message = await interaction.channel.send(f"> ↳ {message} (continued...)")
-                else:
-                    await status_message.edit(content=new_content)
-        except Exception as e:
-            print(f"Discord logger failed: {e}")
+        await progress.acknowledge(f"🏗️ **Building Research Environment for `{safe_subject}`...**")
 
     try:
         # We pass our logger into the loop
@@ -148,17 +122,15 @@ async def research(interaction: discord.Interaction, subject: str, iterations: i
             topic=topic_val, 
             max_iterations=iterations, 
             depth=depth, 
-            log_func=discord_logger # THE BRIDGE
+            log_func=progress
         )
-        
-        try:
-            await interaction.followup.send(f"🏁 **Mission Complete.** {count} sources archived in `{topic_val}`.")
-        except discord.errors.HTTPException:
-            # The interaction token expired (15 minute limit for long researches)
-            await interaction.channel.send(f"<@{interaction.user.id}> 🏁 **Mission Complete.** {count} sources archived in `{topic_val}`.")
+        await progress.send_message(
+            f"🏁 **Mission Complete.** {count} sources archived in `{topic_val}`.",
+            mention_on_fallback=True,
+        )
             
     except Exception as e:
-        await interaction.channel.send(f"🚨 **CRITICAL SYSTEM ERROR:** ```{e}```")
+        await progress.send_message(f"🚨 **CRITICAL SYSTEM ERROR:** ```{e}```", prefer_channel=True)
     finally:
         from agent.checkpoint import clear_soft_stop
         clear_soft_stop()
@@ -178,14 +150,15 @@ async def finish(interaction: discord.Interaction):
 async def chain_research(interaction: discord.Interaction, prompt: str, topic: str, max_depth: int = 4):
     # Safe truncation for prompts which can be massive
     safe_prompt = (prompt[:1500] + '...') if len(prompt) > 1500 else prompt
-    await interaction.response.send_message(f"⛓️ **Analyzing Master Prompt:** `{safe_prompt}`\n> Decomposing into exhaustive sub-topics...")
+    progress = SharedProgressLogger(interaction)
+    await progress.acknowledge(f"⛓️ **Analyzing Master Prompt:** `{safe_prompt}`\n> Decomposing into exhaustive sub-topics...")
     sub_topics = await decompose_chain_prompt(prompt)
     
     # Announce the formulated plan
     plan_msg = "### 📋 Chain Research Plan\n"
     for i, t in enumerate(sub_topics, 1):
         plan_msg += f"{i}. {t}\n"
-    await interaction.channel.send(plan_msg)
+    await progress.send_message(plan_msg, prefer_channel=True)
         
     # We check if a chain checkpoint exists.
     checkpoint = load_chain_checkpoint(prompt)
@@ -193,7 +166,10 @@ async def chain_research(interaction: discord.Interaction, prompt: str, topic: s
         start_idx = checkpoint["current_topic_index"]
         queries = checkpoint["sub_topics"]
         sub_topic = queries[start_idx]
-        await interaction.channel.send(f"⚠️ Resuming exactly from interrupted chain: {topic} - `{sub_topic}`")
+        await progress.send_message(
+            f"⚠️ Resuming exactly from interrupted chain: {topic} - `{sub_topic}`",
+            prefer_channel=True,
+        )
     else:
         # Save a new checkpoint so if we crash during decomposition, we can't resume, we just start over
         save_chain_checkpoint(
@@ -220,22 +196,10 @@ async def chain_research(interaction: discord.Interaction, prompt: str, topic: s
             current_topic_index=i
         )
         
-        await interaction.channel.send(f"\n🚀 **Chain Progress {i+1}/{len(queries)} — Starting sub-chain:** `{sub_topic}`")
-        
-        status_message = None
-        async def chain_logger(message, is_sub_step=False):
-            nonlocal status_message
-            try:
-                if not is_sub_step:
-                    status_message = await interaction.channel.send(f"> {message}")
-                elif status_message:
-                    new_content = status_message.content + f"\n> ↳ {message}"
-                    if len(new_content) > 1900:
-                        status_message = await interaction.channel.send(f"> ↳ {message} (cont...)")
-                    else:
-                        await status_message.edit(content=new_content)
-            except Exception:
-                pass
+        await progress.send_message(
+            f"\n🚀 **Chain Progress {i+1}/{len(queries)} — Starting sub-chain:** `{sub_topic}`",
+            prefer_channel=True,
+        )
                 
         try:
             await run_autonomous_loop(
@@ -243,10 +207,10 @@ async def chain_research(interaction: discord.Interaction, prompt: str, topic: s
                 topic=topic,
                 max_iterations=1, # One deep loop per sub-topic
                 depth=max_depth,
-                log_func=chain_logger
+                log_func=progress
             )
         except Exception as e:
-            await interaction.channel.send(f"🚨 **CHAIN FAILED on `{sub_topic}`:** ```{e}```")
+            await progress.send_message(f"🚨 **CHAIN FAILED on `{sub_topic}`:** ```{e}```", prefer_channel=True)
             return # Stop the chain if a sub-loop critically fails
         finally:
             from agent.checkpoint import clear_soft_stop
@@ -254,7 +218,7 @@ async def chain_research(interaction: discord.Interaction, prompt: str, topic: s
             
     # Chain complete
     delete_chain_checkpoint(prompt)
-    await interaction.channel.send(f"🏁 **ALL CHAINS COMPLETE.** Pool `{topic}` is rich with knowledge!")
+    await progress.send_message(f"🏁 **ALL CHAINS COMPLETE.** Pool `{topic}` is rich with knowledge!", prefer_channel=True)
 
 @bot.tree.command(name="ask", description="Query your research database for English answers.")
 @app_commands.describe(
@@ -283,35 +247,29 @@ async def ask(interaction: discord.Interaction, topic: str, question: str,
     # Extract string from choice, default to Balanced
     mode_val = mode.value if mode else "Balanced"
     style_val = style.value if style else "Concise"
+    progress = SharedProgressLogger(interaction)
 
     # Acknowledge the command natively - Truncate long questions to stay within Discord's 2000 char limit
     safe_q = (question[:1500] + '...') if len(question) > 1500 else question
     existing_ask_checkpoint = None if resume_from else load_ask_checkpoint(topic, question, mode_val, style_val, local_only)
     if existing_ask_checkpoint and existing_ask_checkpoint.get("status") == "in_progress":
-        await interaction.response.send_message(f"### 🧠 Intelligence Report: {topic}\n> **Q:** {safe_q}\n\n⚡ **Resuming Interrupted Ask Session...**")
+        await progress.acknowledge(
+            f"### 🧠 Intelligence Report: {topic}\n> **Q:** {safe_q}\n\n⚡ **Resuming Interrupted Ask Session...**"
+        )
     else:
-        await interaction.response.send_message(f"### 🧠 Intelligence Report: {topic}\n> **Q:** {safe_q}\n\n⚙️ **Initializing Agentic Analysis...**")
-    
-    status_message = None
-    async def discord_status_logger(message: str, is_sub_step: bool = False):
-        nonlocal status_message
-        try:
-            if not is_sub_step:
-                status_message = await interaction.channel.send(f"> {message}")
-            elif status_message:
-                new_content = status_message.content + f"\n> ↳ {message}"
-                if len(new_content) > 1900:
-                    status_message = await interaction.channel.send(f"> ↳ {message} (continued...)")
-                else:
-                    await status_message.edit(content=new_content)
-        except Exception:
-            pass
+        await progress.acknowledge(
+            f"### 🧠 Intelligence Report: {topic}\n> **Q:** {safe_q}\n\n⚙️ **Initializing Agentic Analysis...**"
+        )
             
     async def handle_draft(draft_text: str, iteration: int):
         markdown_bytes = io.BytesIO(draft_text.encode('utf-8'))
         file = discord.File(fp=markdown_bytes, filename=f"Draft_Iter_{iteration}_{topic}.md")
         try:
-            await interaction.channel.send(f"⚠️ **Knowledge Gaps Found!** Intermediate draft (Iteration {iteration}) attached below. Agent is now pushing into Gap Trackers...", file=file)
+            await progress.send_message(
+                f"⚠️ **Knowledge Gaps Found!** Intermediate draft (Iteration {iteration}) attached below. Agent is now pushing into Gap Trackers...",
+                prefer_channel=True,
+                file=file,
+            )
         except Exception:
             pass
     
@@ -319,17 +277,17 @@ async def ask(interaction: discord.Interaction, topic: str, question: str,
     resume_draft = None
     if resume_from:
         if not resume_from.filename.endswith(".md"):
-            await interaction.channel.send("❌ **Error:** `resume_from` must be a `.md` Markdown file.")
+            await progress.send_message("❌ **Error:** `resume_from` must be a `.md` Markdown file.", prefer_channel=True)
             return
         
         try:
-            await discord_status_logger(f"📥 **Downloading report for resumption:** `{resume_from.filename}`...")
+            await progress(f"📥 **Downloading report for resumption:** `{resume_from.filename}`...")
             resume_bytes = await resume_from.read()
             resume_draft = resume_bytes.decode('utf-8')
             # If the user is resuming, we default to a deeper mode if possible
             if not mode: mode_val = "Omniscient"
         except Exception as e:
-            await interaction.channel.send(f"❌ **Failed to read report:** {e}")
+            await progress.send_message(f"❌ **Failed to read report:** {e}", prefer_channel=True)
             return
 
     try:
@@ -338,7 +296,7 @@ async def ask(interaction: discord.Interaction, topic: str, question: str,
             question, 
             mode=mode_val, 
             style=style_val,
-            log_func=discord_status_logger, 
+            log_func=progress, 
             draft_callback=handle_draft, 
             no_web=local_only,
             _draft=resume_draft 
@@ -364,16 +322,17 @@ async def ask(interaction: discord.Interaction, topic: str, question: str,
         )
         
         try:
-            # We use interaction.channel.send because it is independent of the 15m interaction token
-            await interaction.channel.send(content=final_msg, files=files)
-            # Update the original "Initializing..." message to show we're done
-            await interaction.edit_original_response(content="✅ **Analysis Complete.** Reports delivered as a new message.")
+            await progress.send_message(content=final_msg, files=files, prefer_channel=True)
+            await progress.try_edit_acknowledgement("✅ **Analysis Complete.** Reports delivered as a new message.")
         except Exception as e:
             print(f"[Main] Failed to send final report message: {e}")
-            await interaction.channel.send(f"🚨 **Final Report Delivery Failed:** {e}\n*(Note: Data should still be archived in your local knowledge_base)*")
+            await progress.send_message(
+                f"🚨 **Final Report Delivery Failed:** {e}\n*(Note: Data should still be archived in your local knowledge_base)*",
+                prefer_channel=True,
+            )
             
     except Exception as e:
-        await interaction.channel.send(f"🚨 **CRITICAL SYSTEM ERROR:** ```{e}```")
+        await progress.send_message(f"🚨 **CRITICAL SYSTEM ERROR:** ```{e}```", prefer_channel=True)
     finally:
         from agent.checkpoint import clear_soft_stop
         clear_soft_stop()
@@ -384,12 +343,13 @@ async def ask(interaction: discord.Interaction, topic: str, question: str,
     target_language="Target language, e.g. Spanish, French, or Portuguese."
 )
 async def translate(interaction: discord.Interaction, report: discord.Attachment, target_language: str):
+    progress = SharedProgressLogger(interaction)
     if not report.filename.lower().endswith(".md"):
-        await interaction.response.send_message("❌ **Error:** `report` must be a `.md` Markdown file.")
+        await progress.acknowledge("❌ **Error:** `report` must be a `.md` Markdown file.")
         return
 
     safe_lang = (target_language[:100] + "...") if len(target_language) > 100 else target_language
-    await interaction.response.send_message(
+    await progress.acknowledge(
         f"### 🌐 Report Translation Started\n> **Source:** `{report.filename}`\n> **Target:** `{safe_lang}`\n\n⚙️ **Translating Markdown report...**"
     )
 
@@ -403,22 +363,23 @@ async def translate(interaction: discord.Interaction, report: discord.Attachment
         translated_filename = build_translated_report_filename(report.filename, target_language)
         translated_file = discord.File(fp=translated_bytes, filename=translated_filename)
 
-        await interaction.channel.send(
+        await progress.send_message(
             content=(
                 "### ✅ Translated Report Ready\n"
                 f"> **Source:** `{report.filename}`\n"
                 f"> **Target:** `{safe_lang}`\n\n"
                 "Translated Markdown attached below."
             ),
+            prefer_channel=True,
             file=translated_file,
         )
-        await interaction.edit_original_response(content="✅ **Translation Complete.** Translated report delivered as a new message.")
+        await progress.try_edit_acknowledgement("✅ **Translation Complete.** Translated report delivered as a new message.")
     except UnicodeDecodeError:
-        await interaction.channel.send("❌ **Failed to read report:** Markdown files must be valid UTF-8 text.")
+        await progress.send_message("❌ **Failed to read report:** Markdown files must be valid UTF-8 text.", prefer_channel=True)
     except ValueError as e:
-        await interaction.channel.send(f"❌ **Translation Error:** {e}")
+        await progress.send_message(f"❌ **Translation Error:** {e}", prefer_channel=True)
     except Exception as e:
-        await interaction.channel.send(f"🚨 **Translation Failed:** {e}")
+        await progress.send_message(f"🚨 **Translation Failed:** {e}", prefer_channel=True)
 
 # --- Sync Command (Admin only) ---
 @bot.command()

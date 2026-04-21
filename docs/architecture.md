@@ -35,6 +35,7 @@ Discord
 | Path | Responsibility |
 | --- | --- |
 | `main.py` | Discord bot entrypoint and slash commands |
+| `progress_logger.py` | shared Discord + console progress logging, rollover, and timeout-safe message delivery |
 | `agent/loop.py` | autonomous research loop for `/research` |
 | `agent/crawler.py` | focused crawler for `/crawl_site` |
 | `agent/planner.py` | search query generation and loop replanning |
@@ -66,6 +67,13 @@ The project stores data in two forms:
 - PDF handling is lightweight-first, with optional Marker escalation for text-poor/scanned files
 - transient in-process caches reduce repeated planner, search, and query-helper work inside a bot session
 - runtime telemetry tracks cache/search/LLM/source activity and prints a concise summary at the end of a run
+
+## Progress logging model
+
+- commands acknowledge quickly through Discord interactions
+- ongoing progress is rendered through a shared logger that mirrors to console and maintains an editable status message when practical
+- once a status message is too large or too old for safe continued editing, the logger rolls over into a fresh continuation message
+- final files and completion or failure notices are sent through new channel messages so long runs do not depend on brittle interaction edits
 
 ## `/research` flow
 
