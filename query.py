@@ -12,6 +12,7 @@ from agent.ask_state import (
     clamp,
     dequeue_gap_batch,
     ensure_gap_state,
+    explain_gap_route,
     merge_gap_memory,
     quality_from_meta,
     queue_gap_queries,
@@ -410,27 +411,27 @@ async def answer_question(topic: str, question: str, mode: str = "Balanced", sty
                 if route == "resolved_local":
                     set_gap_route(gap_meta, route, _current_auto_loop)
                     await loc_log(
-                        f"✅ **SIP MATCH:** Strong local evidence ({probe['local_score']:.2f}) from {probe['source_count']} sources. Web skipped.",
+                        f"✅ **SIP MATCH:** {explain_gap_route(gap_meta, probe, route, no_web)}. Web skipped.",
                         is_sub_step=True
                     )
                 elif route == "partial_local":
                     set_gap_route(gap_meta, route, _current_auto_loop, 1)
                     await loc_log(
-                        f"🧩 **Partial local evidence retained** ({probe['local_score']:.2f}). Deferring web unless gap repeats.",
+                        f"🧩 **Partial local evidence retained:** {explain_gap_route(gap_meta, probe, route, no_web)}.",
                         is_sub_step=True
                     )
                 elif route == "blocked_offline":
                     set_gap_route(gap_meta, route, _current_auto_loop, 1)
-                    await loc_log(f"⚠️ **Local-Only Mode:** Holding unresolved gap `{gap_query}` for offline evidence only.", is_sub_step=True)
+                    await loc_log(f"⚠️ **Local-Only Mode:** {explain_gap_route(gap_meta, probe, route, no_web)}.", is_sub_step=True)
                 elif route == "defer_local":
                     set_gap_route(gap_meta, route, _current_auto_loop, 1)
                     await loc_log(
-                        f"⏸️ **Weak but non-zero local signal** ({probe['local_score']:.2f}). Deferring before web escalation.",
+                        f"⏸️ **Deferring local retry:** {explain_gap_route(gap_meta, probe, route, no_web)}.",
                         is_sub_step=True
                     )
                 else:
                     await loc_log(
-                        f"🌐 **Web escalation triggered** ({probe['local_score']:.2f}, attempts={gap_meta['local_attempts']}).",
+                        f"🌐 **Web escalation triggered:** {explain_gap_route(gap_meta, probe, route, no_web)}.",
                         is_sub_step=True
                     )
                     web_sources_added = 0
@@ -741,27 +742,27 @@ async def answer_question(topic: str, question: str, mode: str = "Balanced", sty
             if route == "resolved_local":
                 set_gap_route(gap_meta, route, _current_auto_loop)
                 await loc_log(
-                    f"✅ **SIP MATCH:** Strong local evidence ({probe['local_score']:.2f}) from {probe['source_count']} sources. Web skipped.",
+                    f"✅ **SIP MATCH:** {explain_gap_route(gap_meta, probe, route, no_web)}. Web skipped.",
                     is_sub_step=True
                 )
             elif route == "partial_local":
                 set_gap_route(gap_meta, route, _current_auto_loop, 1)
                 await loc_log(
-                    f"🧩 **Partial local evidence retained** ({probe['local_score']:.2f}). Deferring web unless gap repeats.",
+                    f"🧩 **Partial local evidence retained:** {explain_gap_route(gap_meta, probe, route, no_web)}.",
                     is_sub_step=True
                 )
             elif route == "blocked_offline":
                 set_gap_route(gap_meta, route, _current_auto_loop, 1)
-                await loc_log(f"⚠️ **Local-Only Mode:** Holding unresolved gap for offline evidence only.", is_sub_step=True)
+                await loc_log(f"⚠️ **Local-Only Mode:** {explain_gap_route(gap_meta, probe, route, no_web)}.", is_sub_step=True)
             elif route == "defer_local":
                 set_gap_route(gap_meta, route, _current_auto_loop, 1)
                 await loc_log(
-                    f"⏸️ **Weak but non-zero local signal** ({probe['local_score']:.2f}). Deferring before web escalation.",
+                    f"⏸️ **Deferring local retry:** {explain_gap_route(gap_meta, probe, route, no_web)}.",
                     is_sub_step=True
                 )
             else:
                 await loc_log(
-                    f"🌐 **Web escalation triggered** ({probe['local_score']:.2f}, attempts={gap_meta['local_attempts']}).",
+                    f"🌐 **Web escalation triggered:** {explain_gap_route(gap_meta, probe, route, no_web)}.",
                     is_sub_step=True
                 )
                 web_sources_added = 0

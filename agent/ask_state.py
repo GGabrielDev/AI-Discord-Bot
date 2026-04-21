@@ -1,11 +1,28 @@
 import re
+import os
 
-MAX_GAPS_PER_CYCLE = 3
-LOCAL_RESOLUTION_THRESHOLD = 0.72
-WEB_TRIGGER_THRESHOLD = 0.38
-PARTIAL_CONTEXT_THRESHOLD = 0.28
-LOCAL_RETRY_LIMIT = 2
-WEB_BACKOFF_LOOPS = 2
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.getenv(name, str(default)))
+    except ValueError:
+        return default
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, str(default)))
+    except ValueError:
+        return default
+
+
+MAX_GAPS_PER_CYCLE = _env_int("ASK_MAX_GAPS_PER_CYCLE", 3)
+LOCAL_RESOLUTION_THRESHOLD = _env_float("ASK_LOCAL_RESOLUTION_THRESHOLD", 0.72)
+WEB_TRIGGER_THRESHOLD = _env_float("ASK_WEB_TRIGGER_THRESHOLD", 0.38)
+PARTIAL_CONTEXT_THRESHOLD = _env_float("ASK_PARTIAL_CONTEXT_THRESHOLD", 0.28)
+LOCAL_RETRY_LIMIT = _env_int("ASK_LOCAL_RETRY_LIMIT", 2)
+WEB_BACKOFF_LOOPS = _env_int("ASK_WEB_BACKOFF_LOOPS", 2)
+FRESHNESS_MAX_AGE_DAYS = _env_int("ASK_FRESHNESS_MAX_AGE_DAYS", 180)
+FRESHNESS_PENALTY = _env_float("ASK_FRESHNESS_PENALTY", 0.18)
 FRESHNESS_HINT_PATTERN = re.compile(r"\b(current|latest|recent|today|new|status|202[4-9]|live)\b", re.IGNORECASE)
 
 
@@ -146,13 +163,18 @@ def build_gap_memory_snapshot(gap_state: dict) -> dict:
 def quality_from_meta(meta: dict) -> float:
     explicit_score = safe_float(meta.get("source_quality_score"), -1.0)
     if explicit_score >= 0:
-        return clamp(explicit_score)
+        base_score = clamp(explicit_score)
+    else:
+        has_raw = safe_float(meta.get("source_has_raw"), 1.0 if meta.get("chunk_type") == "raw" else 0.0)
+        has_summary = safe_float(meta.get("source_has_summary"), 1.0 if meta.get("chunk_type") == "summary" else 0.0)
+        total_chunks = safe_float(meta.get("source_total_chunks"), meta.get("total_chunks", 1))
+        coverage_score = min(total_chunks, 8.0) / 8.0
+        base_score = clamp(0.2 + (0.25 * has_raw) + (0.25 * has_summary) + (0.3 * coverage_score))
 
-    has_raw = safe_float(meta.get("source_has_raw"), 1.0 if meta.get("chunk_type") == "raw" else 0.0)
-    has_summary = safe_float(meta.get("source_has_summary"), 1.0 if meta.get("chunk_type") == "summary" else 0.0)
-    total_chunks = safe_float(meta.get("source_total_chunks"), meta.get("total_chunks", 1))
-    coverage_score = min(total_chunks, 8.0) / 8.0
-    return clamp(0.2 + (0.25 * has_raw) + (0.25 * has_summary) + (0.3 * coverage_score))
+    age_days = safe_float(meta.get("source_age_days"), 0.0)
+    if age_days > FRESHNESS_MAX_AGE_DAYS:
+        base_score -= FRESHNESS_PENALTY * min(1.0, age_days / max(FRESHNESS_MAX_AGE_DAYS, 1))
+    return clamp(base_score)
 
 
 def is_freshness_gap(gap_query: str) -> bool:
@@ -210,3 +232,30 @@ def build_gap_context(gap_query: str, probe: dict) -> str:
     if not probe.get("answer"):
         return ""
     return f"LOCAL EVIDENCE FOR '{gap_query}':\n{probe['answer']}"
+
+
+def explain_gap_route(gap_meta: dict, probe: dict, route: str, no_web: bool) -> str:
+    score = probe.get("local_score", 0.0)
+    llm_conf = probe.get("llm_confidence", 0.0)
+    sources = probe.get("source_count", 0)
+    attempts = gap_meta.get("local_attempts", 0)
+
+    if route == "resolved_local":
+        return f"score={score:.2f}, llm={llm_conf:.2f}, sources={sources}"
+    if route == "blocked_offline":
+        return f"offline-only mode, score={score:.2f}, sources={sources}"
+    if route == "needs_web":
+        if no_web:
+            return f"offline-only mode blocked web escalation, score={score:.2f}"
+        if is_freshness_gap(gap_meta["query"]):
+            return f"freshness-sensitive gap, score={score:.2f}, sources={sources}"
+        if probe.get("total_hits", 0) == 0:
+            return "no local hits"
+        if score < WEB_TRIGGER_THRESHOLD:
+            return f"score below web threshold ({score:.2f} < {WEB_TRIGGER_THRESHOLD:.2f})"
+        return f"local retries exhausted ({attempts}/{LOCAL_RETRY_LIMIT}), score={score:.2f}"
+    if route == "partial_local":
+        return f"partial answer kept, score={score:.2f}, sources={sources}"
+    if route == "defer_local":
+        return f"weak local signal kept for retry, score={score:.2f}, sources={sources}"
+    return f"score={score:.2f}, sources={sources}"

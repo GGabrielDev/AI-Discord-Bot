@@ -4,7 +4,9 @@ from agent.ask_state import (
     advance_gap_cycle,
     dequeue_gap_batch,
     ensure_gap_state,
+    explain_gap_route,
     merge_gap_memory,
+    quality_from_meta,
     queue_gap_queries,
     record_gap_probe,
     select_gap_route,
@@ -80,6 +82,36 @@ class AskStateTests(unittest.TestCase):
         merged = merge_gap_memory(state, memory)
         self.assertEqual(merged["repeat_counts"]["legacy chemistry detail"], 4)
         self.assertEqual(merged["details"]["legacy chemistry detail"]["last_route"], "partial_local")
+
+    def test_quality_penalizes_stale_sources_and_explains_route(self):
+        fresh_score = quality_from_meta({
+            "source_quality_score": 0.8,
+            "source_age_days": 30,
+        })
+        stale_score = quality_from_meta({
+            "source_quality_score": 0.8,
+            "source_age_days": 365,
+        })
+        self.assertLess(stale_score, fresh_score)
+
+        state = ensure_gap_state(None)
+        queue_gap_queries(state, ["latest deployment status"])
+        probe = {
+            "answer": "",
+            "resolved": False,
+            "llm_confidence": 0.0,
+            "local_score": 0.15,
+            "source_count": 0,
+            "raw_hits": 0,
+            "summary_hits": 0,
+            "total_hits": 0,
+            "has_partial_answer": False,
+        }
+        gap_meta = record_gap_probe(state, "latest deployment status", probe, 0)
+        route = select_gap_route(gap_meta, probe, False)
+        explanation = explain_gap_route(gap_meta, probe, route, False)
+        self.assertEqual(route, "needs_web")
+        self.assertTrue(explanation)
 
 
 if __name__ == "__main__":
