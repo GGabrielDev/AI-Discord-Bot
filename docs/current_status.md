@@ -44,6 +44,17 @@ Project is in a usable but still evolving state. Core research, crawl, and query
 - preservation of partial offline evidence
 - web escalation only when local signal remains weak or repeated
 
+### Runtime efficiency
+
+- shared AsyncOpenAI client reused across hot paths
+- shared HTTP clients for SearXNG and scraper traffic
+- hardware-aware runtime profiles:
+  - `low-memory`
+  - `balanced`
+  - `max-recall`
+- cheap search-result prefilter before scrape/summarize
+- tighter low-memory HTML/PDF ingest budgets
+
 ### Maintenance
 
 - duplicate cleanup tool
@@ -69,9 +80,6 @@ Project is in a usable but still evolving state. Core research, crawl, and query
 
 ## Recommended next work
 
-1. Add persistent `/ask` checkpointing
-2. Add automated tests around:
-   - checkpoint load/save
-   - gap queue ordering
-   - metadata backfill behavior
-3. Add deployment docs for target machine service layout
+1. Add PDF preflight so large/low-text PDFs can be skipped or downgraded before expensive parsing
+2. Add transient caches for search responses, planner outputs, and source probes
+3. Add storage pruning and cold-data policies for long-running collections

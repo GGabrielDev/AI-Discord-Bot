@@ -19,8 +19,16 @@ import hashlib
 import time
 from llm.client import LocalLLM
 from agent.planner import generate_search_queries, evaluate_and_replan
+from agent.source_ranker import prefilter_search_results
 from agent.summarizer import summarize_page, compress_raw_text, chunk_text
-from config.settings import LLM_MODEL_NAME, SAFE_WORD_BUDGET
+from config.settings import (
+    LLM_MODEL_NAME,
+    SAFE_WORD_BUDGET,
+    RESOURCE_PROFILE,
+    SEARCH_CANDIDATE_MULTIPLIER,
+    MAX_SOURCES_PER_QUERY,
+    SEARCH_PREFILTER_MIN_SCORE,
+)
 from agent.wiki_builder import store_article
 from agent.checkpoint import save_checkpoint, load_checkpoint, delete_checkpoint, check_soft_stop
 from tools.search import get_search_results
@@ -109,9 +117,22 @@ async def run_autonomous_loop(subject, topic, max_iterations=3, depth=3, log_fun
             # Skip queries we already completed in a previous session
             if q_idx < query_start:
                 continue
-                
+
             await report(f"🔎 *Searching:* `{query}`")
-            results = await get_search_results(query, max_results=depth)
+            scrape_budget = max(1, min(depth, MAX_SOURCES_PER_QUERY))
+            candidate_limit = max(scrape_budget, depth * SEARCH_CANDIDATE_MULTIPLIER)
+            results = await get_search_results(query, max_results=candidate_limit)
+            results, rejected_results = prefilter_search_results(
+                results,
+                query=query,
+                max_results=scrape_budget,
+                min_score=SEARCH_PREFILTER_MIN_SCORE,
+            )
+            if rejected_results:
+                await report(
+                    f"🧮 *Profile `{RESOURCE_PROFILE}` kept {len(results)}/{len(results) + len(rejected_results)} search candidates before scraping.*",
+                    is_sub_step=True,
+                )
             
             for res in results:
                 url = res["url"]

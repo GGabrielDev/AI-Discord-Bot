@@ -1,6 +1,6 @@
 import re
 from llm.client import LocalLLM
-from config.settings import LLM_CONTEXT_WINDOW, SAFE_WORD_BUDGET
+from config.settings import SAFE_WORD_BUDGET, SUMMARIZER_WORDS_PER_CALL_RATIO
 
 # Safety ceiling: max words we'll ever feed to the LLM in a single call.
 MAX_INPUT_WORDS = SAFE_WORD_BUDGET
@@ -8,7 +8,7 @@ MAX_INPUT_WORDS = SAFE_WORD_BUDGET
 # Max words to send per summarization call. 
 # Use 70% of the safe word budget to leave plenty of room for 
 # the prompt instructions and the R1 model's <think> response.
-MAX_WORDS_PER_CALL = int(SAFE_WORD_BUDGET * 0.7)
+MAX_WORDS_PER_CALL = int(SAFE_WORD_BUDGET * SUMMARIZER_WORDS_PER_CALL_RATIO)
 
 
 def chunk_text(text: str, target_size: int = 400, overlap_sentences: int = 2) -> list[str]:

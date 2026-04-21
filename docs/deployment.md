@@ -48,6 +48,23 @@ ASK_FRESHNESS_MAX_AGE_DAYS=180
 ASK_FRESHNESS_PENALTY=0.18
 ```
 
+## Runtime profile knobs
+
+These values tune the general research/crawl runtime for the target machine:
+
+```env
+RESOURCE_PROFILE=low-memory
+HTTP_MAX_CONNECTIONS=20
+HTTP_MAX_KEEPALIVE_CONNECTIONS=10
+HTTP_KEEPALIVE_EXPIRY=30
+```
+
+Profiles:
+
+- `low-memory`: default for BC250-class hardware; fewer scrape targets, smaller summarization windows, tighter HTML/PDF limits
+- `balanced`: moderate expansion with less aggressive limits
+- `max-recall`: larger scrape and summarization budgets for stronger machines
+
 ## Target-machine validation checklist
 
 Run these on the target machine after deploying new code:
@@ -69,6 +86,7 @@ Run these on the target machine after deploying new code:
    - run a small `/crawl_site`
    - run `/ask` on an existing topic
    - interrupt a long `/ask`, restart bot, rerun same request, confirm resume
+   - compare one `/research` run under `RESOURCE_PROFILE=low-memory` vs `balanced` and confirm lower source count / lower latency under the low-memory profile
 
 ## Recovery checklist
 
